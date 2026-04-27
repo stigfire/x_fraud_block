@@ -1,6 +1,6 @@
 # X Fraud Scanner (垃圾推号一扫空)
 
-一个 Tampermonkey 用户脚本，专门用于在 X（Twitter）推文回复区识别并一键批量 Block 中文诈骗/色情引流账号。
+一个浏览器用户脚本（userscript），专门用于在 X（Twitter）推文回复区识别并一键批量 Block 中文诈骗/色情引流账号。可通过 Tampermonkey、Violentmonkey、Greasemonkey 等常见 userscript 管理器安装运行。
 
 ---
 
@@ -14,9 +14,9 @@
 
 ## 安装
 
-1. 安装浏览器扩展 [Tampermonkey](https://www.tampermonkey.net/)
+1. 安装一个 userscript 管理器，例如 [Tampermonkey](https://www.tampermonkey.net/)、[Violentmonkey](https://violentmonkey.github.io/) 或 [Greasemonkey](https://www.greasespot.net/)
 2. 打开脚本文件 `x_fraud_scanner.user.js`，或在 Greasy Fork / UserScripts 页面点击安装
-3. Tampermonkey 会弹出确认页面，点击"安装"即可
+3. userscript 管理器会弹出确认页面，点击"安装"即可
 4. 打开任意推文的回复页面（`x.com/*/status/*`），右下角会出现操作按钮
 
 ---
@@ -78,7 +78,7 @@ X.com 的 Block API 需要两个凭证：Bearer Token 和 CSRF Token（ct0 cooki
 
 ### Block API
 
-使用 `GM_xmlhttpRequest`（Tampermonkey 提供的跨域请求能力）调用：
+使用 `GM_xmlhttpRequest`（userscript 管理器提供的跨域请求能力）调用：
 
 ```
 POST https://x.com/i/api/1.1/blocks/create.json
