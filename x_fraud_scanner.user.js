@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.74
+// @version      4.75
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
 // @author       Anthony
 // @license MIT
