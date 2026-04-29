@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.71
+// @version      4.74
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
 // @author       Anthony
 // @license MIT
@@ -23,36 +23,65 @@
   const HEART_RE   = /[\u2764\u2665\u2763\u{1F493}\u{1F494}\u{1F495}\u{1F496}\u{1F497}\u{1F498}\u{1F499}\u{1F49A}\u{1F49B}\u{1F49C}\u{1F49D}\u{1F49E}\u{1F49F}\u{1F5A4}\u{1F90D}\u{1F90E}\u{1F9E1}]/u;
   // Basic CJK block — used to distinguish Chinese-context tweets from English ones
   const CHINESE_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
-  const DEFAULT_SUSPECT_KWS      = ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big brother', '单男', '第一骚', '小m', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场'];
+  const DEFAULT_SUSPECT_KWS      = ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big bro', 'big brother', 'little bro', '单男', '第一骚', '小m', '男大弟弟', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场', '同城的哥哥', '⬆️', '🍓'];
   // Text keywords matched against display name (dynamic, can add/remove in panel)
-  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女'];
+  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费'];
   // RegEx patterns matched against tweet body (stored as strings, compiled at match time)
   // Preset: @handle followed by blank lines then an upward arrow — classic spam referral pattern
   const DEFAULT_SUSPECT_RE_KWS   = ['^@\\w+\\n+[⬆↑⇑]', '👉\\s*@\\w'];
   // Keyword storage: only user additions/deletions are persisted.
   // Defaults are always merged in at startup, so new script-level presets
   // appear automatically even when the user has existing stored data.
+  function _normKw(k) {
+    return String(k).trim().toLowerCase();
+  }
+  function _cleanKwList(list) {
+    const seen = new Set();
+    const out = [];
+    for (const raw of Array.isArray(list) ? list : []) {
+      const v = String(raw).trim();
+      const norm = _normKw(v);
+      if (!v || seen.has(norm)) continue;
+      seen.add(norm);
+      out.push(v);
+    }
+    return out;
+  }
+  function _sameList(a, b) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
   function _loadKws(defaults, key) {
-    const adds = GM_getValue(key + '_add', []);
+    const rawAdds = GM_getValue(key + '_add', []);
+    const rawAddList = Array.isArray(rawAdds) ? rawAdds : [];
+    const defNorms = new Set(defaults.map(_normKw));
+    const adds = _cleanKwList(rawAddList).filter(k => !defNorms.has(_normKw(k)));
+    if (!_sameList(rawAddList, adds)) GM_setValue(key + '_add', adds);
     const dels = new Set(GM_getValue(key + '_del', []));
     return [...new Set([...defaults, ...adds])].filter(k => !dels.has(k));
   }
   function _saveKwSet(live, defaults, key) {
-    const defSet = new Set(defaults);
-    GM_setValue(key + '_add', live.filter(k => !defSet.has(k)));
-    GM_setValue(key + '_del', defaults.filter(k => !live.includes(k)));
+    const cleanLive = _cleanKwList(live);
+    const defNorms = new Set(defaults.map(_normKw));
+    const liveNorms = new Set(cleanLive.map(_normKw));
+    GM_setValue(key + '_add', cleanLive.filter(k => !defNorms.has(_normKw(k))));
+    GM_setValue(key + '_del', defaults.filter(k => !liveNorms.has(_normKw(k))));
   }
   let SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
   let SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
   let SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+  function reloadKws() {
+    SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
+    SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
+    SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+  }
   function saveKws() {
     _saveKwSet(SUSPECT_KWS,      DEFAULT_SUSPECT_KWS,      'suspect_kws');
     _saveKwSet(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     _saveKwSet(SUSPECT_RE_KWS,   DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
   }
   function _kwAdditions(live, defaults) {
-    const defSet = new Set(defaults);
-    return live.filter(k => !defSet.has(k));
+    const defNorms = new Set(defaults.map(_normKw));
+    return _cleanKwList(live).filter(k => !defNorms.has(_normKw(k)));
   }
   async function copyText(text) {
     try {
@@ -286,6 +315,10 @@
       .replace(/^[ \t]+$/mg, ''); // collapse whitespace-only lines so \n+ spans them
   }
 
+  function asciiLetterCount(s) {
+    return (String(s).match(/[a-z]/gi) || []).length;
+  }
+
   function getContextSnippets(text, keywords, len) {
     const hits = [];
     // Normalize: remove invisible format characters before matching so that
@@ -293,20 +326,22 @@
     const clean = stripInvisible(text);
     const lower = clean.toLowerCase();
     // Pre-check: does this tweet contain any Chinese characters?
-    // Pure-ASCII keywords (e.g. 'dd') only make sense as fraud signals inside
-    // Chinese-language tweets. In an English tweet they produce false positives.
+    // Short ASCII-only keywords (e.g. 'dd') only make sense as fraud signals inside
+    // Chinese-language tweets. Longer ASCII phrases are explicit enough to stand alone.
     const textHasChinese = CHINESE_RE.test(clean);
 
     for (const kw of keywords) {
       const idx = lower.indexOf(kw.toLowerCase());
       if (idx < 0) continue;
-      // Skip ASCII-only keyword matches when no Chinese characters appear anywhere
-      // in the tweet text — the account is almost certainly not a Chinese fraud account.
-      if (!CHINESE_RE.test(kw) && !textHasChinese) continue;
-      // Prevent partial matches inside longer ASCII words (e.g. 'dd' inside 'daddy').
+      const isAsciiOnlyKw = !CHINESE_RE.test(kw);
+      const isShortAsciiKw = isAsciiOnlyKw && asciiLetterCount(kw) <= 5;
+      // Skip short ASCII-only keyword matches when no Chinese characters appear anywhere
+      // in the tweet text; longer phrases like "big bro" are explicit enough.
+      if (isShortAsciiKw && !textHasChinese) continue;
+      // Prevent partial matches for short ASCII keywords (e.g. 'dd' inside 'daddy').
       // Require that the characters immediately surrounding the match are NOT ASCII
       // word characters — Chinese characters and spaces naturally satisfy this.
-      if (!CHINESE_RE.test(kw)) {
+      if (isShortAsciiKw) {
         const ASCII_WORD_CHAR = /[a-z0-9_]/;
         const before = idx > 0 ? lower[idx - 1] : '';
         const after  = idx + kw.length < lower.length ? lower[idx + kw.length] : '';
@@ -355,6 +390,7 @@
 
   // ── Page scanner ─────────────────────────────────────────────────────
   function scanPage() {
+    reloadKws();
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     const userMap = new Map();
 
@@ -915,59 +951,66 @@
       cb.addEventListener('change', () => { blockBtn.textContent = `Block (${checkedCount()})`; });
     });
 
-    blockBtn.onclick = async () => {
+    async function startBlocking() {
+      if (blockBtn.disabled) return;
       const uniqueHandles = [...new Set(allCheckboxes.filter(({ cb }) => cb.checked).map(({ handle }) => handle))];
-      if (uniqueHandles.length === 0) return;
+      try {
+        if (uniqueHandles.length === 0) return;
 
-      const csrf = getCsrf();
-      if (!csrf) { alert('未找到登录凭证（ct0 cookie），请确认已登录 X/Twitter'); return; }
+        const csrf = getCsrf();
+        if (!csrf) { alert('未找到登录凭证（ct0 cookie），请确认已登录 X/Twitter'); return; }
 
-      stopBackgroundLoad = true;  // stop background scroll so page stays put
-      blockBtn.disabled = true;
-      deselBtn.disabled = true;
-      selBtn.disabled = true;
+        stopBackgroundLoad = true;  // stop background scroll so page stays put
+        blockBtn.disabled = true;
+        deselBtn.disabled = true;
+        selBtn.disabled = true;
 
-      const rowMap = new Map();
-      allCheckboxes.forEach(({ handle, row }) => {
-        if (!rowMap.has(handle)) rowMap.set(handle, []);
-        rowMap.get(handle).push(row);
-      });
+        const rowMap = new Map();
+        allCheckboxes.forEach(({ handle, row }) => {
+          if (!rowMap.has(handle)) rowMap.set(handle, []);
+          rowMap.get(handle).push(row);
+        });
 
-      let done = 0, failed = 0;
-      for (const handle of uniqueHandles) {
-        blockBtn.textContent = `⏳ ${done + 1}/${uniqueHandles.length}`;
-        try {
-          await blockUserCoordinated(handle, csrf);
-          done++;
-          blockedHandles.add(handle);
-          dimArticlesByHandle(handle);
-          document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
-            const bMatched = b.dataset.xfsMatched === '1';
-            b.dataset.xfsState = 'blocked';
-            b.textContent      = IBTN_CHECK_SVG;
-            b.style.border     = `1.5px solid ${C.mute}`;
-            b.style.color      = C.mute;
-            b.style.boxShadow  = '';
-            b.style.background = `${C.mute}18`;
-            b.style.opacity    = '1';
-            b.title            = (bMatched ? '[匹配过滤] ' : '') + `已屏蔽 · 点击取消 @${handle}`;
-          });
-          (rowMap.get(handle) || []).forEach(row => {
-            row.dataset.blocked = '1';
-            row.style.opacity = '0.3';
-            const nameEl = row.querySelector('.xfs-name');
-            if (nameEl) nameEl.style.textDecoration = 'line-through';
-          });
-        } catch (e) {
-          failed++;
-          console.warn(`[XFS] block @${handle} failed:`, e);
+        let done = 0, failed = 0;
+        for (const handle of uniqueHandles) {
+          blockBtn.textContent = `⏳ ${done + 1}/${uniqueHandles.length}`;
+          try {
+            await blockUserCoordinated(handle, csrf);
+            done++;
+            blockedHandles.add(handle);
+            dimArticlesByHandle(handle);
+            document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
+              const bMatched = b.dataset.xfsMatched === '1';
+              b.dataset.xfsState = 'blocked';
+              b.textContent      = IBTN_CHECK_SVG;
+              b.style.border     = `1.5px solid ${C.mute}`;
+              b.style.color      = C.mute;
+              b.style.boxShadow  = '';
+              b.style.background = `${C.mute}18`;
+              b.style.opacity    = '1';
+              b.title            = (bMatched ? '[匹配过滤] ' : '') + `已屏蔽 · 点击取消 @${handle}`;
+            });
+            (rowMap.get(handle) || []).forEach(row => {
+              row.dataset.blocked = '1';
+              row.style.opacity = '0.3';
+              const nameEl = row.querySelector('.xfs-name');
+              if (nameEl) nameEl.style.textDecoration = 'line-through';
+            });
+          } catch (e) {
+            failed++;
+            console.warn(`[XFS] block @${handle} failed:`, e);
+          }
+          blockBtn.textContent = `${done}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
         }
-        blockBtn.textContent = `${done}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
-      }
 
-      blockBtn.textContent = `完成 ${done}${failed ? `，${failed} 失败` : ''}`;
-      hint.style.display = '';
-    };
+        blockBtn.textContent = `完成 ${done}${failed ? `，${failed} 失败` : ''}`;
+        hint.style.display = '';
+      } finally {
+        opts.onBlockDone?.();
+      }
+    }
+
+    blockBtn.onclick = startBlocking;
 
     ftr.appendChild(deselBtn);
     ftr.appendChild(selBtn);
@@ -1011,6 +1054,7 @@
     // Must happen after panel is in DOM so clientHeight is non-zero.
     requestAnimationFrame(() => {
       colContainer.style.height = body.clientHeight + 'px';
+      if (opts.autoBlock) setTimeout(startBlocking, 0);
     });
   }
 
@@ -1049,30 +1093,21 @@
     });
   }
 
-  // ── Quick scan: show current DOM, load more in background ─────────────
+  // ── Quick scan: show current DOM and immediately block checked users ──
   async function autoLoadAndScan() {
-    stopBackgroundLoad = false;
+    stopBackgroundLoad = true;
     sweepInProgress = true;
     applyHideAll(); // unhide articles so layout is stable during scrolling
     const btn = document.getElementById('xfs-btn');
-    const MAX_ROUNDS = 15;
-
-    showPanel(scanPage());
     if (btn) { btn.disabled = true; btn.style.opacity = '0.4'; }
-
-    for (let i = 0; i < MAX_ROUNDS; i++) {
-      if (stopBackgroundLoad) break;
-      if (btn) btn.title = `后台加载中 ${i + 1}/${MAX_ROUNDS}…`;
-      const savedY = window.scrollY;
-      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
-      const gotMore = await waitForMore(1500);
-      window.scrollTo({ top: savedY, behavior: 'instant' });
-      if (!gotMore) break;
-    }
-
-    sweepInProgress = false;
-    applyHideAll(); // re-apply hide state now that layout is stable
-    if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.title = '当前页垃圾号屏蔽'; }
+    showPanel(scanPage(), {
+      autoBlock: true,
+      onBlockDone: () => {
+        sweepInProgress = false;
+        applyHideAll(); // re-apply hide state now that layout is stable
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.title = '当前页垃圾号屏蔽'; }
+      },
+    });
   }
 
   // ── Sweep all: race to bottom first, then scan back up ───────────────
