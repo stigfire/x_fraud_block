@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.75
+// @version      4.76
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
 // @author       Anthony
 // @license MIT
@@ -1105,7 +1105,7 @@
       onBlockDone: () => {
         sweepInProgress = false;
         applyHideAll(); // re-apply hide state now that layout is stable
-        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.title = '当前页垃圾号屏蔽'; }
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.title = '当前视图垃圾号自动屏蔽'; }
       },
     });
   }
@@ -1605,11 +1605,11 @@
     injectGearBtn();
     if (!document.getElementById('xfs-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-btn', SCAN_SVG, '当前页垃圾号屏蔽', 240, C.blockRed, autoLoadAndScan));
+        'xfs-btn', SCAN_SVG, '当前视图垃圾号自动屏蔽', 240, C.blockRed, autoLoadAndScan));
     }
     if (!document.getElementById('xfs-sweep-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-sweep-btn', SWEEP_SVG, '当前页垃圾号一网打尽', 200, C.nameKw, () => {
+        'xfs-sweep-btn', SWEEP_SVG, '整页回复垃圾号一网打尽', 200, C.nameKw, () => {
           if (sweepHasRun) {
             // Second+ click: reload page first so already-blocked accounts are gone,
             // then auto-trigger sweep once the page has reloaded.
