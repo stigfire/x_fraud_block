@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.76
+// @version      4.79
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
 // @author       Anthony
 // @license MIT
@@ -28,7 +28,12 @@
   const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费'];
   // RegEx patterns matched against tweet body (stored as strings, compiled at match time)
   // Preset: @handle followed by blank lines then an upward arrow — classic spam referral pattern
-  const DEFAULT_SUSPECT_RE_KWS   = ['^@\\w+\\n+[⬆↑⇑]', '👉\\s*@\\w'];
+  const DEFAULT_SUSPECT_RE_KWS   = [
+    '^@\\w+\\n+[⬆↑⇑]',
+    '👉\\s*@\\w',
+    '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
+    '(?=[\\s\\S]*主页)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
+  ];
   // Keyword storage: only user additions/deletions are persisted.
   // Defaults are always merged in at startup, so new script-level presets
   // appear automatically even when the user has existing stored data.
@@ -171,7 +176,10 @@
     }
     saveKws();
     showToast(`已导入 ${total} 个自定义关键词`);
-    if (document.getElementById('xfs-panel')) showPanel(scanPage());
+    if (document.getElementById('xfs-panel')) {
+      const kwBar = document.getElementById('xfs-kw-bar');
+      showPanel(scanPage(), { keywordsOpen: !kwBar || kwBar.style.display !== 'none' });
+    }
   }
 
   // ── Config ───────────────────────────────────────────────────────────
@@ -692,19 +700,33 @@
 
     // ── Keyword management bar ──
     const kwBar = document.createElement('div');
+    kwBar.id = 'xfs-kw-bar';
     kwBar.style.cssText = `padding:4px 8px;border-bottom:1px solid ${C.border};display:flex;flex-direction:column;gap:4px;flex-shrink:0;background:${C.catBg};`;
 
     function renderKwBar() {
       kwBar.innerHTML = '';
       const rowCss = 'display:flex;flex-wrap:wrap;gap:3px;align-items:center;';
+      const refreshKwPanel = () => showPanel(scanPage(), { keywordsOpen: true });
       const toolsRow = document.createElement('div');
-      toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;height:16px;';
+      toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:5px;min-height:22px;';
       const exportBtn = document.createElement('button');
       exportBtn.textContent = '导出自定义';
       exportBtn.title = '只复制手动添加的自定义关键词 JSON，不包含系统预设';
-      exportBtn.style.cssText = `background:#fff;color:${C.sub};border:1px solid ${C.btnBorder};border-radius:8px;padding:0 6px;font-size:10px;line-height:14px;cursor:pointer;`;
+      exportBtn.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:2px 8px;font-size:11px;line-height:16px;font-weight:600;cursor:pointer;`;
       exportBtn.onclick = exportKws;
+      const mergeBtn = document.createElement('button');
+      mergeBtn.textContent = '合并导入';
+      mergeBtn.title = '导入自定义关键词 JSON，并与当前自定义规则合并';
+      mergeBtn.style.cssText = exportBtn.style.cssText;
+      mergeBtn.onclick = () => importKws('merge');
+      const replaceBtn = document.createElement('button');
+      replaceBtn.textContent = '覆盖导入';
+      replaceBtn.title = '用导入 JSON 覆盖当前自定义规则，系统预设不受影响';
+      replaceBtn.style.cssText = exportBtn.style.cssText;
+      replaceBtn.onclick = () => importKws('replace');
       toolsRow.appendChild(exportBtn);
+      toolsRow.appendChild(mergeBtn);
+      toolsRow.appendChild(replaceBtn);
       kwBar.appendChild(toolsRow);
 
       // ── Row 1: Content keywords ──
@@ -721,7 +743,7 @@
         const del = document.createElement('button');
         del.textContent = '×';
         del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.sub};padding:0;line-height:1;`;
-        del.onclick = () => { SUSPECT_KWS.splice(i, 1); saveKws(); showPanel(scanPage()); };
+        del.onclick = () => { SUSPECT_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
         chip.appendChild(del);
         textRow.appendChild(chip);
       });
@@ -730,7 +752,7 @@
       inp.style.cssText = `border:1px solid ${C.btnBorder};border-radius:10px;padding:1px 6px;font-size:10px;width:55px;outline:none;`;
       const addKw = () => {
         const v = inp.value.trim();
-        if (v && !SUSPECT_KWS.includes(v)) { SUSPECT_KWS.push(v); saveKws(); showPanel(scanPage()); }
+        if (v && !SUSPECT_KWS.includes(v)) { SUSPECT_KWS.push(v); saveKws(); refreshKwPanel(); }
         else inp.value = '';
       };
       inp.onkeydown = e => { if (e.key === 'Enter') addKw(); };
@@ -754,7 +776,7 @@
         const del = document.createElement('button');
         del.textContent = '×';
         del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.nameKw};padding:0;line-height:1;`;
-        del.onclick = () => { SUSPECT_NAME_KWS.splice(i, 1); saveKws(); showPanel(scanPage()); };
+        del.onclick = () => { SUSPECT_NAME_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
         chip.appendChild(del);
         nameRow.appendChild(chip);
       });
@@ -763,7 +785,7 @@
       nInp.style.cssText = `border:1px solid ${C.nameKw};border-radius:10px;padding:1px 6px;font-size:10px;width:55px;outline:none;`;
       const addNKw = () => {
         const v = nInp.value.trim();
-        if (v && !SUSPECT_NAME_KWS.includes(v)) { SUSPECT_NAME_KWS.push(v); saveKws(); showPanel(scanPage()); }
+        if (v && !SUSPECT_NAME_KWS.includes(v)) { SUSPECT_NAME_KWS.push(v); saveKws(); refreshKwPanel(); }
         else nInp.value = '';
       };
       nInp.onkeydown = e => { if (e.key === 'Enter') addNKw(); };
@@ -793,7 +815,7 @@
         const del = document.createElement('button');
         del.textContent = '×';
         del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.regexKw};padding:0;line-height:1;flex-shrink:0;`;
-        del.onclick = () => { SUSPECT_RE_KWS.splice(i, 1); saveKws(); showPanel(scanPage()); };
+        del.onclick = () => { SUSPECT_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
         chip.appendChild(lbl);
         chip.appendChild(del);
         reRow.appendChild(chip);
@@ -807,7 +829,7 @@
         if (!v) return;
         try { new RegExp(v, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
         reInp.style.borderColor = C.regexKw;
-        if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); showPanel(scanPage()); }
+        if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); refreshKwPanel(); }
         else reInp.value = '';
       };
       reInp.onkeydown = e => { if (e.key === 'Enter') addRe(); };
@@ -826,11 +848,11 @@
       kwBar.appendChild(reRow);
     }
     renderKwBar();
-    kwBar.style.display = 'none'; // collapsed by default
+    kwBar.style.display = opts.keywordsOpen ? '' : 'none'; // collapsed by default
 
     // Toggle button — inserted into hdr before the × close button
     const kwToggle = document.createElement('button');
-    kwToggle.textContent = '关键词 ▾';
+    kwToggle.textContent = opts.keywordsOpen ? '关键词 ▴' : '关键词 ▾';
     kwToggle.style.cssText = `background:none;border:1px solid ${C.btnBorder};border-radius:8px;cursor:pointer;font-size:10px;color:${C.sub};padding:1px 6px;white-space:nowrap;`;
     kwToggle.onclick = () => {
       const nowHidden = kwBar.style.display === 'none';
@@ -1328,31 +1350,39 @@
     p.id = 'xfs-tools-panel';
     p.style.cssText = [
       'position:fixed', 'right:58px', 'bottom:286px',
-      'width:150px', 'padding:7px',
+      'width:176px', 'padding:8px',
       'background:rgba(255,255,255,0.96)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
       `border:1px solid ${C.btnBorder}`,
       'border-radius:8px',
       'box-shadow:0 4px 18px rgba(0,0,0,0.18)',
       `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
-      `color:${C.text}`, 'font-size:11px',
-      'display:flex', 'flex-direction:column', 'gap:5px',
+      `color:${C.text}`, 'font-size:12px',
+      'display:flex', 'flex-direction:column', 'gap:6px',
       'z-index:2147483647',
     ].join(';');
 
     const title = document.createElement('div');
     title.textContent = '关键词工具';
-    title.style.cssText = `font-size:11px;font-weight:700;color:${C.sub};padding:0 2px 2px;`;
+    title.style.cssText = `font-size:12px;font-weight:700;color:${C.sub};padding:0 2px 2px;`;
     p.appendChild(title);
 
     function mkToolBtn(text, onclick) {
       const b = document.createElement('button');
       b.textContent = text;
-      b.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:4px 7px;font-size:11px;text-align:left;cursor:pointer;`;
+      b.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:6px 9px;font-size:12px;font-weight:600;text-align:left;cursor:pointer;`;
       b.onclick = () => { onclick(); };
       return b;
     }
 
+    const editBtn = mkToolBtn('编辑关键词/正则', () => {
+      closeToolsPanel();
+      showPanel(scanPage(), { keywordsOpen: true });
+    });
+    editBtn.style.borderColor = C.regexKw;
+    editBtn.style.color = C.regexKw;
+    editBtn.style.background = '#f2fbfc';
+    p.appendChild(editBtn);
     p.appendChild(mkToolBtn('导出自定义词', exportKws));
     p.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
     p.appendChild(mkToolBtn('覆盖自定义词', () => importKws('replace')));
@@ -1371,7 +1401,7 @@
   function injectGearBtn() {
     if (!document.body) return;
     if (document.getElementById('xfs-gear-btn')) return;
-    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '自定义关键词导入/导出工具', 320, C.sub, e => {
+    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '自定义关键词/正则工具', 320, C.sub, e => {
       e?.preventDefault?.();
       e?.stopPropagation?.();
       if (document.getElementById('xfs-tools-panel')) closeToolsPanel();
