@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.94
+// @version      4.95
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -25,7 +25,7 @@
   const CHINESE_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
   const DEFAULT_SUSPECT_KWS      = ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big bro', 'big brother', 'little bro', '单男', '第一骚', '小m', '男大弟弟', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场', '同城的哥哥', '⬆️', '🍓'];
   // Text keywords matched against display name (dynamic, can add/remove in panel)
-  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费'];
+  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费', '无偿'];
   // RegEx patterns matched against tweet body (stored as strings, compiled at match time)
   // Preset: @handle followed by blank lines then an upward arrow — classic spam referral pattern
   const DEFAULT_SUSPECT_RE_KWS   = [
