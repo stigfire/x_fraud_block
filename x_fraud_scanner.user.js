@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.91
-// @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
+// @version      4.92
+// @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量屏蔽
 // @author       Anthony
 // @license MIT
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzEiIGZpbGw9IiNmNDIxMmUiLz48Y2lyY2xlIGN4PSIyNyIgY3k9IjI3IiByPSIxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIvPjxsaW5lIHgxPSIzNSIgeTE9IjM1IiB4Mj0iNDgiIHkyPSI0OCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjIxIiB5MT0iMjciIHgyPSIzMyIgeTI9IjI3IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48bGluZSB4MT0iMjciIHkxPSIyMSIgeDI9IjI3IiB5Mj0iMzMiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==
@@ -1243,7 +1243,7 @@
     // ── Hint bar (revealed after blocking completes) ──
     const hint = document.createElement('div');
     hint.style.cssText = `padding:5px 12px;border-top:1px solid ${C.border};font-size:11px;color:${C.sub};text-align:center;flex-shrink:0;display:none;background:${C.catBg};`;
-    hint.textContent = 'block 已成功 · 请手动刷新页面以更新显示';
+    hint.textContent = '屏蔽已成功 · 请手动刷新页面以更新显示';
 
     // ── Footer ──
     const ftr = document.createElement('div');
@@ -1265,10 +1265,10 @@
     selBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = true; });
 
     const checkedCount = () => allCheckboxes.filter(({ cb }) => cb.checked).length;
-    const blockBtn = mkBtn(`Block (${checkedCount()})`, true);
+    const blockBtn = mkBtn(`屏蔽 (${checkedCount()})`, true);
 
     allCheckboxes.forEach(({ cb }) => {
-      cb.addEventListener('change', () => { blockBtn.textContent = `Block (${checkedCount()})`; });
+      cb.addEventListener('change', () => { blockBtn.textContent = `屏蔽 (${checkedCount()})`; });
     });
 
     async function startBlocking() {
@@ -1800,7 +1800,7 @@
       '',
       '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '',
-      '两类账号都可以隐藏；扫描按钮会打开确认面板，再手动 block。',
+      '两类账号都可以隐藏；扫描按钮会打开确认面板，再手动屏蔽。',
     ].join('\n'));
   }
 
@@ -1999,7 +1999,7 @@
             await unblockUser(handle, csrf);
             blockedHandles.delete(handle);
             undimArticlesByHandle(handle);
-            showToast(`@${handle} 已取消 block`, false);
+            showToast(`@${handle} 已取消屏蔽`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               b.dataset.xfsState = 'unblocked';
               b.disabled         = false;
@@ -2009,14 +2009,14 @@
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
-            showToast(`取消 block @${handle} 失败`, true);
+            showToast(`取消屏蔽 @${handle} 失败`, true);
           }
         } else {
           try {
             await blockUserCoordinated(handle, csrf);
             blockedHandles.add(handle);
             dimArticlesByHandle(handle);
-            showToast(`@${handle} 已 block`, false);
+            showToast(`@${handle} 已屏蔽`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               b.dataset.xfsState = 'blocked';
               b.disabled         = false;
@@ -2026,7 +2026,7 @@
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
-            showToast(`block @${handle} 失败`, true);
+            showToast(`屏蔽 @${handle} 失败`, true);
           }
         }
       };
