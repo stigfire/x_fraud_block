@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.93
+// @version      4.94
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -191,17 +191,17 @@
   // false positives than profile-link based referral detection, but the old
   // threshold constant is kept here as a note for possible future scoring.
   // const DEFAULT_LOW_FOLLOWER_THRESHOLD = 5;
-  const REFERRAL_CACHE_KEY = 'xfs-referral-account-cache-v1';
+  const REFERRAL_CACHE_KEY = 'xfs-referral-account-cache-v2';
   const REFERRAL_CACHE_TTL = 48 * 60 * 60 * 1000;
   const REFERRAL_MIN_GAP = 1500;
   const REFERRAL_MAX_CACHE = 1200;
   const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
   const REFERRAL_X_LINK_GLOBAL_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/ig;
-  const DEFAULT_USER_LOOKUP_QUERY_ID = '-oaLodhGbbnzJBACb1kk2Q';
+  const DEFAULT_USER_LOOKUP_QUERY_ID = 'IGgvgiOx4QZndDHuD3x9TQ';
   const USER_LOOKUP_QUERY_ID_FALLBACKS = [
     DEFAULT_USER_LOOKUP_QUERY_ID,
+    '-oaLodhGbbnzJBACb1kk2Q',
     '1VOOyvKkiI3FMmkeDNxM9A',
-    'IGgvgiOx4QZndDHuD3x9TQ',
   ];
   const blockedHandles = new Set(); // tracks handles blocked this session
   let sweepHasRun = false;          // true after first sweep on current URL
@@ -445,10 +445,11 @@
 
   let referralSaveTimer = null;
 
-  function rememberReferralAccount(handle, urls) {
+  function rememberReferralAccount(handle, urls, opts = {}) {
     const key = normalizeHandle(handle);
     if (!key) return;
     const cleanUrls = [...new Set((Array.isArray(urls) ? urls : []).map(u => String(u || '').trim()).filter(Boolean))];
+    if (cleanUrls.length === 0 && opts.allowNegative !== true) return;
     referralCache.set(key, { isReferral: cleanUrls.length > 0, urls: cleanUrls, ts: Date.now() });
     if (!referralSaveTimer) {
       referralSaveTimer = setTimeout(() => {
@@ -513,9 +514,9 @@
 
       const legacy = cur.legacy && typeof cur.legacy === 'object' ? cur.legacy : null;
       if (legacy && legacy.screen_name != null) {
-        rememberReferralAccount(legacy.screen_name, extractProfileXLinks(legacy));
+        rememberReferralAccount(legacy.screen_name, extractProfileXLinks(legacy), { allowNegative: false });
       } else if (cur.screen_name != null) {
-        rememberReferralAccount(cur.screen_name, extractProfileXLinks(cur));
+        rememberReferralAccount(cur.screen_name, extractProfileXLinks(cur), { allowNegative: false });
       }
 
       if (Array.isArray(cur)) {
@@ -564,7 +565,7 @@
         );
       });
       const links = collectReferralXLinks(candidates);
-      if (links.length) rememberReferralAccount(handle, links);
+      if (links.length) rememberReferralAccount(handle, links, { allowNegative: false });
     });
   }
 
@@ -600,7 +601,6 @@
     if (!csrf) return Promise.reject(new Error('missing csrf'));
     const variables = {
       screen_name: handle,
-      withSafetyModeUserFields: true,
       withGrokTranslatedBio: false,
     };
     const features = {
@@ -640,7 +640,7 @@
             const legacy = data?.data?.user?.result?.legacy;
             if (!legacy) throw new Error('missing user legacy');
             const urls = extractProfileXLinks(legacy);
-            rememberReferralAccount(handle, urls);
+            rememberReferralAccount(handle, urls, { allowNegative: true });
             resolve({ isReferral: urls.length > 0, urls });
           } catch (e) {
             reject(e);
