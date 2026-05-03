@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.92
+// @version      4.93
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -196,13 +196,20 @@
   const REFERRAL_MIN_GAP = 1500;
   const REFERRAL_MAX_CACHE = 1200;
   const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
-  const DEFAULT_USER_LOOKUP_QUERY_ID = 'IGgvgiOx4QZndDHuD3x9TQ';
+  const REFERRAL_X_LINK_GLOBAL_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/ig;
+  const DEFAULT_USER_LOOKUP_QUERY_ID = '-oaLodhGbbnzJBACb1kk2Q';
+  const USER_LOOKUP_QUERY_ID_FALLBACKS = [
+    DEFAULT_USER_LOOKUP_QUERY_ID,
+    '1VOOyvKkiI3FMmkeDNxM9A',
+    'IGgvgiOx4QZndDHuD3x9TQ',
+  ];
   const blockedHandles = new Set(); // tracks handles blocked this session
   let sweepHasRun = false;          // true after first sweep on current URL
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let sweepInProgress = false;             // true during sweep/scan scroll ops — suppresses hide application
   let userLookupQueryId = GM_getValue('user_lookup_query_id', DEFAULT_USER_LOOKUP_QUERY_ID);
+  let capturedApiHeaders = null;
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
   const matchedUsersCache = new Map();   // handle → full user object; survives DOM unload by React virtual list
   const BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
@@ -212,6 +219,31 @@
     if (!m || !m[1] || m[1] === userLookupQueryId) return;
     userLookupQueryId = m[1];
     GM_setValue('user_lookup_query_id', userLookupQueryId);
+  }
+
+  function normalizeHeaderObject(headers) {
+    const out = {};
+    if (!headers) return out;
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((value, key) => { out[String(key).toLowerCase()] = value; });
+      return out;
+    }
+    if (Array.isArray(headers)) {
+      headers.forEach(([key, value]) => { out[String(key).toLowerCase()] = value; });
+      return out;
+    }
+    Object.entries(headers).forEach(([key, value]) => {
+      out[String(key).toLowerCase()] = value;
+    });
+    return out;
+  }
+
+  function captureApiHeaders(headers) {
+    const h = normalizeHeaderObject(headers);
+    const auth = h.authorization;
+    if (!auth || !String(auth).startsWith('Bearer ')) return;
+    liveBearer = String(auth).slice(7);
+    capturedApiHeaders = h;
   }
 
   // ── Auth capture — intercept X.com's own requests for the live bearer token ──
@@ -229,6 +261,7 @@
         const url = typeof input === 'string' ? input : (input && input.url) || '';
         try {
           const h = (init && init.headers) || (input && input.headers) || {};
+          captureApiHeaders(h);
           const get = k => typeof h.get === 'function' ? h.get(k) : (h[k] || h[k.toLowerCase()]);
           const auth = get('Authorization') || get('authorization');
           if (auth && auth.startsWith('Bearer ') && auth.length > 30) {
@@ -257,6 +290,8 @@
         return origOpen.apply(this, arguments);
       };
       win.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+        if (!this._xfsHeaders) this._xfsHeaders = {};
+        this._xfsHeaders[name] = value;
         if (name.toLowerCase() === 'authorization' && String(value).startsWith('Bearer ') && value.length > 30) {
           liveBearer = value.slice(7);
         }
@@ -265,6 +300,7 @@
       win.XMLHttpRequest.prototype.send = function () {
         if (String(this._xfsUrl || '').includes('/i/api/graphql/')) {
           maybeCaptureUserLookupQueryId(this._xfsUrl);
+          captureApiHeaders(this._xfsHeaders);
           this.addEventListener('load', function () {
             try { captureReferralAccountsFromText(this.responseText); } catch (_) {}
           });
@@ -436,6 +472,21 @@
     try { captureReferralAccountsFromData(JSON.parse(text)); } catch (_) {}
   }
 
+  function extractReferralXLinksFromText(value) {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    REFERRAL_X_LINK_GLOBAL_RE.lastIndex = 0;
+    return text.match(REFERRAL_X_LINK_GLOBAL_RE) || [];
+  }
+
+  function collectReferralXLinks(candidates) {
+    const out = [];
+    (Array.isArray(candidates) ? candidates : []).forEach(v => {
+      out.push(...extractReferralXLinksFromText(v));
+    });
+    return [...new Set(out.map(v => String(v || '').trim()).filter(v => REFERRAL_X_LINK_RE.test(v)))];
+  }
+
   function extractProfileXLinks(legacy) {
     const candidates = [];
     const pushUrl = u => {
@@ -446,7 +497,8 @@
     legacy?.entities?.url?.urls?.forEach(pushUrl);
     if (legacy?.url) candidates.push(legacy.url);
     if (legacy?.description) candidates.push(legacy.description);
-    return [...new Set(candidates.map(v => String(v || '').trim()).filter(v => REFERRAL_X_LINK_RE.test(v)))];
+    if (legacy?.location) candidates.push(legacy.location);
+    return collectReferralXLinks(candidates);
   }
 
   function captureReferralAccountsFromData(data) {
@@ -474,6 +526,48 @@
     }
   }
 
+  function extractHandleFromProfileDom(scope) {
+    const named = scope.querySelector?.('[data-testid="UserName"][data-x-screen-name]');
+    const dataHandle = named?.getAttribute('data-x-screen-name');
+    if (dataHandle) return dataHandle;
+
+    const avatar = scope.querySelector?.('[data-testid^="UserAvatar-Container-"]');
+    const avatarId = avatar?.getAttribute('data-testid') || '';
+    const avatarHandle = avatarId.match(/^UserAvatar-Container-([A-Za-z0-9_]{1,15})$/)?.[1];
+    if (avatarHandle) return avatarHandle;
+
+    const action = scope.querySelector?.('[aria-label*="@"]');
+    const actionHandle = action?.getAttribute('aria-label')?.match(/@([A-Za-z0-9_]{1,15})\b/)?.[1];
+    if (actionHandle) return actionHandle;
+
+    const pathHandle = location.pathname.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(?:with_replies|media|highlights|likes|about)?)?$/)?.[1];
+    return pathHandle || null;
+  }
+
+  function captureReferralAccountsFromProfileDom(root = document) {
+    const headerItems = root.querySelectorAll?.('[data-testid="UserProfileHeader_Items"]') || [];
+    headerItems.forEach(items => {
+      const scope = items.closest('[role="dialog"]')
+        || items.closest('[data-testid="primaryColumn"]')
+        || items.closest('[data-testid="cellInnerDiv"]')
+        || document;
+      const handle = extractHandleFromProfileDom(scope);
+      if (!handle) return;
+
+      const candidates = [items.textContent];
+      items.querySelectorAll('a,span').forEach(el => {
+        candidates.push(
+          el.textContent,
+          el.getAttribute('href'),
+          el.getAttribute('title'),
+          el.getAttribute('aria-label')
+        );
+      });
+      const links = collectReferralXLinks(candidates);
+      if (links.length) rememberReferralAccount(handle, links);
+    });
+  }
+
   function cachedReferralAccount(handle) {
     const key = normalizeHandle(handle);
     const item = referralCache.get(key);
@@ -486,12 +580,27 @@
     return item;
   }
 
-  function requestReferralAccount(handle) {
+  function referralLookupQueryIds() {
+    return [...new Set([userLookupQueryId, ...USER_LOOKUP_QUERY_ID_FALLBACKS].filter(Boolean))];
+  }
+
+  function referralRequestHeaders(csrf) {
+    return {
+      ...(capturedApiHeaders || {}),
+      authorization: `Bearer ${liveBearer || BEARER}`,
+      'x-csrf-token': csrf,
+      'content-type': 'application/json',
+      'x-twitter-active-user': 'yes',
+      'x-twitter-auth-type': capturedApiHeaders?.['x-twitter-auth-type'] || 'OAuth2Session',
+    };
+  }
+
+  function requestReferralAccountWithQueryId(handle, queryId) {
     const csrf = getCsrf();
     if (!csrf) return Promise.reject(new Error('missing csrf'));
-    const bearer = liveBearer || BEARER;
     const variables = {
       screen_name: handle,
+      withSafetyModeUserFields: true,
       withGrokTranslatedBio: false,
     };
     const features = {
@@ -517,14 +626,8 @@
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'GET',
-        url: `https://x.com/i/api/graphql/${encodeURIComponent(userLookupQueryId)}/UserByScreenName?${params.toString()}`,
-        headers: {
-          Authorization: `Bearer ${bearer}`,
-          'x-csrf-token': csrf,
-          'Content-Type': 'application/json',
-          'x-twitter-active-user': 'yes',
-          'x-twitter-auth-type': 'OAuth2Session',
-        },
+        url: `https://x.com/i/api/graphql/${encodeURIComponent(queryId)}/UserByScreenName?${params.toString()}`,
+        headers: referralRequestHeaders(csrf),
         anonymous: false,
         onload(resp) {
           if (resp.status < 200 || resp.status >= 300) {
@@ -546,6 +649,23 @@
         onerror() { reject(new Error('Network error')); },
       });
     });
+  }
+
+  async function requestReferralAccount(handle) {
+    let lastError = null;
+    for (const queryId of referralLookupQueryIds()) {
+      try {
+        const result = await requestReferralAccountWithQueryId(handle, queryId);
+        if (queryId !== userLookupQueryId) {
+          userLookupQueryId = queryId;
+          GM_setValue('user_lookup_query_id', userLookupQueryId);
+        }
+        return result;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError || new Error('referral lookup failed');
   }
 
   function fetchReferralAccount(handle) {
@@ -2353,6 +2473,7 @@
 
     let lastPath = location.pathname;
     let ibtnTimer = null;
+    let profileTimer = null;
     let watchdogTimer = null;
 
     function startButtonWatchdog(duration = 30000, interval = 500) {
@@ -2388,6 +2509,7 @@
       removeListBtn();
       removeMuteBtn();
       document.getElementById('xfs-panel')?.remove();
+      setTimeout(captureReferralAccountsFromProfileDom, 300);
       setTimeout(ensureRouteButtons, 300);
       startButtonWatchdog(12000, 500);
     }
@@ -2399,12 +2521,15 @@
     const observer = new MutationObserver(() => {
       clearTimeout(ibtnTimer);
       ibtnTimer = setTimeout(injectInlineButtons, 300);
+      clearTimeout(profileTimer);
+      profileTimer = setTimeout(captureReferralAccountsFromProfileDom, 250);
 
       // Fallback: re-inject main buttons if DOM settled before the nav timer fired.
       ensureRouteButtons();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     // Initial inject on page load
+    setTimeout(captureReferralAccountsFromProfileDom, 900);
     setTimeout(injectInlineButtons, 1200);
     setTimeout(ensureRouteButtons, 1200);
 
