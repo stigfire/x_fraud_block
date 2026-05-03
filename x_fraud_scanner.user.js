@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Fraud Scanner (垃圾推号一扫空)
 // @namespace    http://tampermonkey.net/
-// @version      4.79
+// @version      4.91
 // @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量 Block
 // @author       Anthony
 // @license MIT
@@ -187,13 +187,32 @@
   const MAX_BLOCK  = 100;
   const BLOCK_DELAY  = 3000; // base inter-block gap (ms)
   const BLOCK_JITTER = 2000; // random extra added to base, making effective range 3-5s
+  // Low-follower hiding is intentionally disabled for now. It produced more
+  // false positives than profile-link based referral detection, but the old
+  // threshold constant is kept here as a note for possible future scoring.
+  // const DEFAULT_LOW_FOLLOWER_THRESHOLD = 5;
+  const REFERRAL_CACHE_KEY = 'xfs-referral-account-cache-v1';
+  const REFERRAL_CACHE_TTL = 48 * 60 * 60 * 1000;
+  const REFERRAL_MIN_GAP = 1500;
+  const REFERRAL_MAX_CACHE = 1200;
+  const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
+  const DEFAULT_USER_LOOKUP_QUERY_ID = 'IGgvgiOx4QZndDHuD3x9TQ';
   const blockedHandles = new Set(); // tracks handles blocked this session
   let sweepHasRun = false;          // true after first sweep on current URL
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
+  let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let sweepInProgress = false;             // true during sweep/scan scroll ops — suppresses hide application
+  let userLookupQueryId = GM_getValue('user_lookup_query_id', DEFAULT_USER_LOOKUP_QUERY_ID);
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
   const matchedUsersCache = new Map();   // handle → full user object; survives DOM unload by React virtual list
   const BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+
+  function maybeCaptureUserLookupQueryId(url) {
+    const m = String(url || '').match(/\/i\/api\/graphql\/([^/?]+)\/UserByScreenName\b/);
+    if (!m || !m[1] || m[1] === userLookupQueryId) return;
+    userLookupQueryId = m[1];
+    GM_setValue('user_lookup_query_id', userLookupQueryId);
+  }
 
   // ── Auth capture — intercept X.com's own requests for the live bearer token ──
   let liveBearer = null;
@@ -207,6 +226,7 @@
     try {
       const origFetch = win.fetch;
       win.fetch = function (input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
         try {
           const h = (init && init.headers) || (input && input.headers) || {};
           const get = k => typeof h.get === 'function' ? h.get(k) : (h[k] || h[k.toLowerCase()]);
@@ -215,18 +235,41 @@
             liveBearer = auth.slice(7);
           }
         } catch (_) {}
-        return origFetch.apply(this, arguments);
+        const p = origFetch.apply(this, arguments);
+        if (String(url).includes('/i/api/graphql/')) {
+          maybeCaptureUserLookupQueryId(url);
+          return p.then(resp => {
+            captureReferralAccountsFromResponse(resp);
+            return resp;
+          });
+        }
+        return p;
       };
     } catch (e) { console.warn('[XFS] fetch hook failed', e); }
 
     // Hook XHR (X.com uses both)
     try {
+      const origOpen = win.XMLHttpRequest.prototype.open;
       const origSet = win.XMLHttpRequest.prototype.setRequestHeader;
+      const origSend = win.XMLHttpRequest.prototype.send;
+      win.XMLHttpRequest.prototype.open = function (method, url) {
+        this._xfsUrl = url;
+        return origOpen.apply(this, arguments);
+      };
       win.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
         if (name.toLowerCase() === 'authorization' && String(value).startsWith('Bearer ') && value.length > 30) {
           liveBearer = value.slice(7);
         }
         return origSet.apply(this, arguments);
+      };
+      win.XMLHttpRequest.prototype.send = function () {
+        if (String(this._xfsUrl || '').includes('/i/api/graphql/')) {
+          maybeCaptureUserLookupQueryId(this._xfsUrl);
+          this.addEventListener('load', function () {
+            try { captureReferralAccountsFromText(this.responseText); } catch (_) {}
+          });
+        }
+        return origSend.apply(this, arguments);
       };
     } catch (e) { console.warn('[XFS] XHR hook failed', e); }
 
@@ -312,6 +355,232 @@
   function getCsrf() {
     const m = document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/);
     return m ? m[1] : null;
+  }
+
+  function normalizeHandle(handle) {
+    return String(handle || '').replace(/^@/, '').trim().toLowerCase();
+  }
+
+  function extractHandleFromArticle(art) {
+    const nameEl = art.querySelector('[data-testid="User-Name"]');
+    if (!nameEl) return null;
+    for (const sp of nameEl.querySelectorAll('span')) {
+      const t = sp.textContent.trim();
+      if (t.startsWith('@') && t.length > 1 && !t.includes(' ')) return t.slice(1);
+    }
+    return null;
+  }
+
+  function loadReferralCache() {
+    const raw = GM_getValue(REFERRAL_CACHE_KEY, {});
+    const now = Date.now();
+    const cache = new Map();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return cache;
+    Object.entries(raw).forEach(([handle, item]) => {
+      const ts = Number(item && item.ts);
+      if (Number.isFinite(ts) && now - ts < REFERRAL_CACHE_TTL) {
+        cache.set(handle, {
+          isReferral: !!(item && item.isReferral),
+          urls: Array.isArray(item && item.urls) ? item.urls : [],
+          ts,
+        });
+      }
+    });
+    return cache;
+  }
+
+  const referralCache = loadReferralCache();
+  const referralPending = new Map();
+  const referralQueue = [];
+  let referralQueueActive = false;
+  let referralLastRequest = 0;
+  let referralWarned = false;
+
+  function saveReferralCache() {
+    const entries = [...referralCache.entries()].sort((a, b) => b[1].ts - a[1].ts).slice(0, REFERRAL_MAX_CACHE);
+    referralCache.clear();
+    const out = {};
+    entries.forEach(([handle, item]) => {
+      referralCache.set(handle, item);
+      out[handle] = item;
+    });
+    GM_setValue(REFERRAL_CACHE_KEY, out);
+  }
+
+  let referralSaveTimer = null;
+
+  function rememberReferralAccount(handle, urls) {
+    const key = normalizeHandle(handle);
+    if (!key) return;
+    const cleanUrls = [...new Set((Array.isArray(urls) ? urls : []).map(u => String(u || '').trim()).filter(Boolean))];
+    referralCache.set(key, { isReferral: cleanUrls.length > 0, urls: cleanUrls, ts: Date.now() });
+    if (!referralSaveTimer) {
+      referralSaveTimer = setTimeout(() => {
+        referralSaveTimer = null;
+        saveReferralCache();
+      }, 1000);
+    }
+    applyReferralAccountToArticles(key);
+  }
+
+  function captureReferralAccountsFromResponse(resp) {
+    try {
+      const type = resp.headers && resp.headers.get && resp.headers.get('content-type');
+      if (type && !type.includes('application/json')) return;
+      resp.clone().json().then(captureReferralAccountsFromData).catch(() => {});
+    } catch (_) {}
+  }
+
+  function captureReferralAccountsFromText(text) {
+    if (!text || text.length < 20) return;
+    try { captureReferralAccountsFromData(JSON.parse(text)); } catch (_) {}
+  }
+
+  function extractProfileXLinks(legacy) {
+    const candidates = [];
+    const pushUrl = u => {
+      if (!u) return;
+      candidates.push(u.url, u.expanded_url, u.display_url);
+    };
+    legacy?.entities?.description?.urls?.forEach(pushUrl);
+    legacy?.entities?.url?.urls?.forEach(pushUrl);
+    if (legacy?.url) candidates.push(legacy.url);
+    if (legacy?.description) candidates.push(legacy.description);
+    return [...new Set(candidates.map(v => String(v || '').trim()).filter(v => REFERRAL_X_LINK_RE.test(v)))];
+  }
+
+  function captureReferralAccountsFromData(data) {
+    const stack = [data];
+    const seen = new Set();
+    let visited = 0;
+    while (stack.length && visited < 20000) {
+      const cur = stack.pop();
+      if (!cur || typeof cur !== 'object' || seen.has(cur)) continue;
+      seen.add(cur);
+      visited++;
+
+      const legacy = cur.legacy && typeof cur.legacy === 'object' ? cur.legacy : null;
+      if (legacy && legacy.screen_name != null) {
+        rememberReferralAccount(legacy.screen_name, extractProfileXLinks(legacy));
+      } else if (cur.screen_name != null) {
+        rememberReferralAccount(cur.screen_name, extractProfileXLinks(cur));
+      }
+
+      if (Array.isArray(cur)) {
+        cur.forEach(v => { if (v && typeof v === 'object') stack.push(v); });
+      } else {
+        Object.values(cur).forEach(v => { if (v && typeof v === 'object') stack.push(v); });
+      }
+    }
+  }
+
+  function cachedReferralAccount(handle) {
+    const key = normalizeHandle(handle);
+    const item = referralCache.get(key);
+    if (!item) return null;
+    if (Date.now() - item.ts >= REFERRAL_CACHE_TTL) {
+      referralCache.delete(key);
+      saveReferralCache();
+      return null;
+    }
+    return item;
+  }
+
+  function requestReferralAccount(handle) {
+    const csrf = getCsrf();
+    if (!csrf) return Promise.reject(new Error('missing csrf'));
+    const bearer = liveBearer || BEARER;
+    const variables = {
+      screen_name: handle,
+      withGrokTranslatedBio: false,
+    };
+    const features = {
+      hidden_profile_subscriptions_enabled: true,
+      profile_label_improvements_pcf_label_in_post_enabled: true,
+      responsive_web_profile_redirect_enabled: true,
+      rweb_tipjar_consumption_enabled: true,
+      verified_phone_label_enabled: false,
+      subscriptions_verification_info_is_identity_verified_enabled: true,
+      subscriptions_verification_info_verified_since_enabled: true,
+      highlights_tweets_tab_ui_enabled: true,
+      responsive_web_twitter_article_notes_tab_enabled: true,
+      subscriptions_feature_can_gift_premium: true,
+      creator_subscriptions_tweet_preview_api_enabled: true,
+      responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+      responsive_web_graphql_timeline_navigation_enabled: true,
+    };
+    const params = new URLSearchParams({
+      variables: JSON.stringify(variables),
+      features: JSON.stringify(features),
+      fieldToggles: JSON.stringify({ withAuxiliaryUserLabels: true, withPayments: false }),
+    });
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: `https://x.com/i/api/graphql/${encodeURIComponent(userLookupQueryId)}/UserByScreenName?${params.toString()}`,
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          'x-csrf-token': csrf,
+          'Content-Type': 'application/json',
+          'x-twitter-active-user': 'yes',
+          'x-twitter-auth-type': 'OAuth2Session',
+        },
+        anonymous: false,
+        onload(resp) {
+          if (resp.status < 200 || resp.status >= 300) {
+            reject(new Error(`HTTP ${resp.status}`));
+            return;
+          }
+          try {
+            const data = JSON.parse(resp.responseText || '{}');
+            captureReferralAccountsFromData(data);
+            const legacy = data?.data?.user?.result?.legacy;
+            if (!legacy) throw new Error('missing user legacy');
+            const urls = extractProfileXLinks(legacy);
+            rememberReferralAccount(handle, urls);
+            resolve({ isReferral: urls.length > 0, urls });
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onerror() { reject(new Error('Network error')); },
+      });
+    });
+  }
+
+  function fetchReferralAccount(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return Promise.reject(new Error('missing handle'));
+    const cached = cachedReferralAccount(key);
+    if (cached !== null) return Promise.resolve(cached);
+    if (referralPending.has(key)) return referralPending.get(key);
+
+    const promise = new Promise((resolve, reject) => {
+      referralQueue.push({ handle, key, resolve, reject });
+      processReferralQueue();
+    });
+    referralPending.set(key, promise);
+    return promise;
+  }
+
+  async function processReferralQueue() {
+    if (referralQueueActive || referralQueue.length === 0) return;
+    referralQueueActive = true;
+    const item = referralQueue.shift();
+    const elapsed = Date.now() - referralLastRequest;
+    if (elapsed < REFERRAL_MIN_GAP) await sleep(REFERRAL_MIN_GAP - elapsed);
+    referralLastRequest = Date.now();
+    try {
+      const result = await requestReferralAccount(item.handle);
+      item.resolve(result);
+    } catch (e) {
+      console.debug(`[XFS] referral lookup failed @${item.handle}:`, e);
+      item.reject(e);
+    } finally {
+      referralPending.delete(item.key);
+      referralQueueActive = false;
+      setTimeout(processReferralQueue, 0);
+    }
   }
 
   // Strip Unicode Format-category characters (zero-width spaces, soft hyphens, etc.)
@@ -612,6 +881,7 @@
     blockRed:  '#f4212e',
     btnBorder: '#cfd9de',
     regexKw:   '#0d7a8a',
+    referral:  '#5f6f89',
   };
 
   const CAT_META = {
@@ -620,6 +890,7 @@
     suspect:  { label: '可疑关键词',         color: C.suspect },
     regex_kw: { label: '正则匹配',           color: C.regexKw },
     liker:    { label: '列表用户',           color: C.mute },
+    referral: { label: '导流号',             color: C.referral },
   };
 
   function showPanel(allUsers, opts = {}) {
@@ -632,6 +903,7 @@
     function getPrimaryCat(u) {
       if (u.cats.has('heart'))    return 'heart';
       if (u.cats.has('name_kw')) return 'name_kw';
+      if (u.cats.has('referral')) return 'referral';
       if (u.cats.has('liker'))   return 'liker';
       if (u.cats.has('regex_kw')) return 'regex_kw';
       return 'suspect';
@@ -639,7 +911,8 @@
     const ordered = [
       ...topUsers.filter(u => u.cats.has('heart')),
       ...topUsers.filter(u => !u.cats.has('heart') && u.cats.has('name_kw')),
-      ...topUsers.filter(u => !u.cats.has('heart') && !u.cats.has('name_kw')),
+      ...topUsers.filter(u => !u.cats.has('heart') && !u.cats.has('name_kw') && u.cats.has('referral')),
+      ...topUsers.filter(u => !u.cats.has('heart') && !u.cats.has('name_kw') && !u.cats.has('referral')),
     ];
 
     // ── Adaptive column count & panel width ──
@@ -728,6 +1001,31 @@
       toolsRow.appendChild(mergeBtn);
       toolsRow.appendChild(replaceBtn);
       kwBar.appendChild(toolsRow);
+
+      const referralRow = document.createElement('div');
+      referralRow.style.cssText = rowCss;
+      const referralLbl = document.createElement('span');
+      referralLbl.textContent = '导流:';
+      referralLbl.style.cssText = `font-size:10px;color:${C.referral};flex-shrink:0;min-width:36px;`;
+      referralRow.appendChild(referralLbl);
+      const referralToggle = document.createElement('input');
+      referralToggle.type = 'checkbox';
+      referralToggle.checked = hideReferralActive;
+      referralToggle.title = '隐藏主页简介/网址中含 x.com 导流链接的账号';
+      referralToggle.style.cssText = 'margin:0 2px 0 0;';
+      referralToggle.onchange = () => {
+        hideReferralActive = referralToggle.checked;
+        GM_setValue('hide_referral_accounts', hideReferralActive);
+        updateReferralBtn();
+        if (hideReferralActive) applyReferralForVisible();
+        applyHideAll();
+      };
+      referralRow.appendChild(referralToggle);
+      const referralText = document.createElement('span');
+      referralText.textContent = '隐藏 profile 含 x.com 链接的账号';
+      referralText.style.cssText = `font-size:10px;color:${C.text};`;
+      referralRow.appendChild(referralText);
+      kwBar.appendChild(referralRow);
 
       // ── Row 1: Content keywords ──
       const textRow = document.createElement('div');
@@ -1280,13 +1578,14 @@
   const SCAN_SVG      = '🔍';  // targeted scan current page
   const SWEEP_SVG     = '⚡';  // sweep all replies
   const MUTE_SVG      = '🔇';  // mute selected word
-  const EYE_SVG       = '👁';  // hide toggle: currently showing (click to hide)
-  const EYE_SLASH_SVG = '🙈';  // hide toggle: currently hidden (click to show)
+  const EYE_SVG       = '👁';  // hide toggle; active state is shown by color/border
   const GEAR_SVG      = '⚙';  // low-frequency tools: keyword import/export
 
-  // ── Hide-matched helpers ─────────────────────────────────────────────
+  // ── Hide helpers ─────────────────────────────────────────────────────
   function applyHideToArticle(art) {
-    const shouldHide = !sweepInProgress && hideMatchedActive && art.dataset.xfsHideMatched === '1';
+    const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
+    const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
+    const shouldHide = !sweepInProgress && (shouldHideMatched || shouldHideReferral);
     if (shouldHide && art.dataset.xfsHidden !== '1') {
       art.dataset.xfsHidden = '1';
       art.style.setProperty('max-height',    '2px',    'important');
@@ -1305,13 +1604,161 @@
   }
 
   function applyHideAll() {
-    document.querySelectorAll('article[data-testid="tweet"][data-xfs-hide-matched]').forEach(applyHideToArticle);
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(applyHideToArticle);
+  }
+
+  /*
+  // Disabled low-follower scoring. Kept for future risk scoring if needed.
+  // function lowFollowerReason(handle) {
+  //   const item = cachedReferralAccount(handle);
+  //   const followers = item?.followers;
+  //   return followers !== null && followers <= DEFAULT_LOW_FOLLOWER_THRESHOLD ? followers : null;
+  // }
+  */
+
+  function referralReason(handle) {
+    const item = cachedReferralAccount(handle);
+    return item && item.isReferral ? item : null;
+  }
+
+  function buttonMatchedReason(btn) {
+    if (btn.dataset.xfsMatched === '1') return 'matched';
+    if (btn.dataset.xfsReferralAccount === '1') return 'referral';
+    return '';
+  }
+
+  function updateInlineBlockButton(btn) {
+    const isBlocked = btn.dataset.xfsState === 'blocked';
+    const reason = buttonMatchedReason(btn);
+    const isHot = reason !== '';
+    const color = reason === 'referral' ? C.referral : C.blockRed;
+    btn.style.border = `1.5px solid ${isBlocked ? C.mute : (isHot ? color : C.btnBorder)}`;
+    btn.style.color = isBlocked ? C.mute : (isHot ? color : C.sub);
+    btn.style.boxShadow = !isBlocked && isHot ? `0 0 0 2px ${color}40` : '';
+    btn.style.background = isBlocked ? `${C.mute}18` : 'transparent';
+    const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : '');
+    const handle = btn.dataset.xfsHandle || '';
+    btn.title = prefix + (isBlocked ? `已屏蔽 · 点击取消 @${handle}` : `屏蔽 @${handle}`);
+  }
+
+  function setReferralButtons(handle, item) {
+    const key = normalizeHandle(handle);
+    const isReferral = !!(item && item.isReferral);
+    document.querySelectorAll(`button[data-xfs-handle]`).forEach(btn => {
+      if (normalizeHandle(btn.dataset.xfsHandle) !== key) return;
+      btn.dataset.xfsReferralAccount = isReferral ? '1' : '0';
+      if (isReferral && item.urls?.length) btn.dataset.xfsReferralUrl = item.urls[0];
+      updateInlineBlockButton(btn);
+    });
+  }
+
+  function applyReferralAccountToArticles(handle) {
+    const key = normalizeHandle(handle);
+    const item = cachedReferralAccount(key);
+    const isReferral = !!(item && item.isReferral);
+    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (art === firstArt) return;
+      const artHandle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+      if (artHandle !== key) return;
+      art.dataset.xfsReferralHandle = artHandle;
+      art.dataset.xfsReferralAccount = isReferral ? '1' : '0';
+      if (isReferral && item.urls?.length) art.dataset.xfsReferralUrl = item.urls[0];
+      applyHideToArticle(art);
+    });
+    setReferralButtons(key, item);
+    updateReferralBadge();
+  }
+
+  function scheduleReferralCheck(art, handle, isOP = false) {
+    if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
+    const key = normalizeHandle(handle);
+    if (!key || isOP) {
+      art.dataset.xfsReferralAccount = '0';
+      return;
+    }
+    art.dataset.xfsReferralHandle = key;
+
+    const cached = cachedReferralAccount(key);
+    if (cached !== null) {
+      applyReferralAccountToArticles(key);
+      return;
+    }
+    if (!hideReferralActive) return;
+
+    fetchReferralAccount(handle)
+      .then(() => applyReferralAccountToArticles(key))
+      .catch(() => {
+        if (!referralWarned && hideReferralActive) {
+          referralWarned = true;
+          showToast('导流号查询失败：X API 暂不可用或限流', true);
+        }
+      });
+  }
+
+  function applyReferralForVisible() {
+    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (art === firstArt) return;
+      const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
+      if (!handle) return;
+      scheduleReferralCheck(art, handle, false);
+    });
+    updateReferralBadge();
+  }
+
+  async function scanReferralAccountsInView() {
+    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+    const handles = [];
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (art === firstArt) return;
+      const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
+      const key = normalizeHandle(handle);
+      if (key && !handles.includes(key)) handles.push(key);
+    });
+    if (handles.length === 0) {
+      showToast('当前视图没有可扫描的回复用户', true);
+      return;
+    }
+    showToast(`正在检查导流号 ${handles.length} 个`, false);
+    for (const handle of handles) {
+      try { await fetchReferralAccount(handle); } catch (_) {}
+    }
+    applyReferralForVisible();
+    const users = handles
+      .map(handle => {
+        const item = cachedReferralAccount(handle);
+        return item && item.isReferral ? {
+          handle,
+          displayName: handle,
+          cats: new Set(['referral']),
+          heartHits: [],
+          nameKwHits: [],
+          kwHits: [{ kw: '导流号', snippet: item.urls?.[0] || 'profile x.com link' }],
+          reHits: [],
+          tweetSnippet: item.urls?.[0] || '',
+        } : null;
+      })
+      .filter(Boolean);
+    if (users.length === 0) {
+      showToast('当前视图未发现导流号', false);
+      return;
+    }
+    showPanel(users);
   }
 
   function updateHideBadge() {
     const badge = document.getElementById('xfs-hide-badge');
     if (!badge) return;
     const n = matchedHandlesInView.size;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.style.display = n > 0 ? 'flex' : 'none';
+  }
+
+  function updateReferralBadge() {
+    const badge = document.getElementById('xfs-referral-badge');
+    if (!badge) return;
+    const n = document.querySelectorAll('article[data-testid="tweet"][data-xfs-referral-account="1"]').length;
     badge.textContent = n > 99 ? '99+' : String(n);
     badge.style.display = n > 0 ? 'flex' : 'none';
   }
@@ -1327,9 +1774,10 @@
       'background:rgba(255,255,255,0.92)',
       'backdrop-filter:blur(4px)', '-webkit-backdrop-filter:blur(4px)',
       `border:2px solid ${color}`, `color:${color}`,
-      'cursor:pointer', 'padding:0',
+      'cursor:pointer', 'padding:0', 'box-sizing:border-box',
       'display:flex', 'align-items:center', 'justify-content:center',
-      'font-size:16px', 'line-height:1',
+      'font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif',
+      'font-size:15px', 'line-height:1',
       'z-index:2147483646',
       'box-shadow:0 2px 8px rgba(0,0,0,0.16)',
       'transition:transform 0.15s,box-shadow 0.15s',
@@ -1344,12 +1792,24 @@
     document.getElementById('xfs-tools-panel')?.remove();
   }
 
+  function showCategoryHelp() {
+    window.alert([
+      '两类账号说明',
+      '',
+      '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
+      '',
+      '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
+      '',
+      '两类账号都可以隐藏；扫描按钮会打开确认面板，再手动 block。',
+    ].join('\n'));
+  }
+
   function showToolsPanel() {
     closeToolsPanel();
     const p = document.createElement('div');
     p.id = 'xfs-tools-panel';
     p.style.cssText = [
-      'position:fixed', 'right:58px', 'bottom:286px',
+      'position:fixed', 'right:58px', 'bottom:166px',
       'width:176px', 'padding:8px',
       'background:rgba(255,255,255,0.96)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
@@ -1383,6 +1843,7 @@
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
     p.appendChild(editBtn);
+    p.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
     p.appendChild(mkToolBtn('导出自定义词', exportKws));
     p.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
     p.appendChild(mkToolBtn('覆盖自定义词', () => importKws('replace')));
@@ -1401,7 +1862,7 @@
   function injectGearBtn() {
     if (!document.body) return;
     if (document.getElementById('xfs-gear-btn')) return;
-    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '自定义关键词/正则工具', 320, C.sub, e => {
+    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '自定义关键词/正则工具', 200, C.sub, e => {
       e?.preventDefault?.();
       e?.stopPropagation?.();
       if (document.getElementById('xfs-tools-panel')) closeToolsPanel();
@@ -1453,6 +1914,7 @@
       const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
       const isOP = art === firstArt;
       art.dataset.xfsHideMatched = (!isOP && matched) ? '1' : '0';
+      scheduleReferralCheck(art, handle, isOP);
       if (!isOP && matched && /\/status\/\d/.test(location.pathname)) {
         matchedHandlesInView.add(handle);
         if (!matchedUsersCache.has(handle))
@@ -1476,11 +1938,10 @@
       btn.dataset.xfsHandle  = handle;
       btn.dataset.xfsState   = alreadyBlocked ? 'blocked' : 'unblocked';
       btn.dataset.xfsMatched = matched ? '1' : '0';
+      const referral = referralReason(handle);
+      btn.dataset.xfsReferralAccount = referral ? '1' : '0';
+      if (referral?.urls?.length) btn.dataset.xfsReferralUrl = referral.urls[0];
       btn.textContent = alreadyBlocked ? IBTN_CHECK_SVG : IBTN_BLOCK_SVG;
-      btn.title = (matched ? '[匹配过滤] ' : '') + (alreadyBlocked ? `已屏蔽 · 点击取消 @${handle}` : `屏蔽 @${handle}`);
-
-      const borderColor = alreadyBlocked ? C.mute : (matched ? C.blockRed : C.btnBorder);
-      const iconColor   = alreadyBlocked ? C.mute : (matched ? C.blockRed : C.sub);
 
       // Use explicit properties only — 'all:unset' resets display and causes invisible buttons.
       // These inline styles have higher specificity than any site stylesheet.
@@ -1491,8 +1952,8 @@
         width:          '18px',
         height:         '18px',
         borderRadius:   '50%',
-        border:         `1.5px solid ${borderColor}`,
-        color:          iconColor,
+        border:         `1.5px solid ${C.btnBorder}`,
+        color:          C.sub,
         background:     alreadyBlocked ? `${C.mute}18` : 'transparent',
         cursor:         'pointer',
         padding:        '0',
@@ -1502,7 +1963,7 @@
         verticalAlign:  'middle',
         transition:     'background 0.12s,transform 0.1s',
         opacity:        '1',
-        boxShadow:      matched && !alreadyBlocked ? `0 0 0 2px ${C.blockRed}40` : '',
+        boxShadow:      '',
         lineHeight:     '1',
         fontFamily:     'inherit',
         fontSize:       '11px',
@@ -1510,15 +1971,18 @@
         zIndex:         '10',
         position:       'relative',
       });
+      updateInlineBlockButton(btn);
 
       btn.onmouseenter = () => {
         if (btn.disabled) return;
         const isBlocked = btn.dataset.xfsState === 'blocked';
-        btn.style.background = isBlocked ? `${C.suspect}20` : (matched ? `${C.blockRed}18` : `${C.sub}12`);
+        const reason = buttonMatchedReason(btn);
+        const color = reason === 'referral' ? C.referral : C.blockRed;
+        btn.style.background = isBlocked ? `${C.suspect}20` : (reason ? `${color}18` : `${C.sub}12`);
         btn.style.transform  = 'scale(1.18)';
       };
       btn.onmouseleave = () => {
-        btn.style.background = btn.dataset.xfsState === 'blocked' ? `${C.mute}18` : 'transparent';
+        updateInlineBlockButton(btn);
         btn.style.transform  = '';
       };
 
@@ -1537,16 +2001,11 @@
             undimArticlesByHandle(handle);
             showToast(`@${handle} 已取消 block`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
-              const bMatched = b.dataset.xfsMatched === '1';
               b.dataset.xfsState = 'unblocked';
               b.disabled         = false;
               b.textContent      = IBTN_BLOCK_SVG;
-              b.style.border     = `1.5px solid ${bMatched ? C.blockRed : C.btnBorder}`;
-              b.style.color      = bMatched ? C.blockRed : C.sub;
-              b.style.boxShadow  = bMatched ? `0 0 0 2px ${C.blockRed}40` : '';
-              b.style.background = 'transparent';
               b.style.opacity    = '1';
-              b.title            = (bMatched ? '[匹配过滤] ' : '') + `屏蔽 @${handle}`;
+              updateInlineBlockButton(b);
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
@@ -1559,16 +2018,11 @@
             dimArticlesByHandle(handle);
             showToast(`@${handle} 已 block`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
-              const bMatched = b.dataset.xfsMatched === '1';
               b.dataset.xfsState = 'blocked';
               b.disabled         = false;
               b.textContent      = IBTN_CHECK_SVG;
-              b.style.border     = `1.5px solid ${C.mute}`;
-              b.style.color      = C.mute;
-              b.style.boxShadow  = '';
-              b.style.background = `${C.mute}18`;
               b.style.opacity    = '1';
-              b.title            = (bMatched ? '[匹配过滤] ' : '') + `已屏蔽 · 点击取消 @${handle}`;
+              updateInlineBlockButton(b);
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
@@ -1600,30 +2054,69 @@
   }
 
   // ── Button group backdrop ────────────────────────────────────────────
-  // A pill-shaped panel behind the stacked buttons (gear/hide/scan/sweep) so they
+  // A pill-shaped panel behind the stacked buttons:
+  // content hide, content scan/block, sweep, referral hide, referral scan/block, settings.
   // read as one unified plugin widget rather than separate circles.
-  // Dimensions derived from button positions: sweep(200), scan(240), hide(280), gear(320).
+  // Dimensions derived from button positions: gear(200), referral scan(240), referral hide(280), sweep(320), scan(360), hide(400).
   function injectBtnBackdrop() {
     if (!document.body) return;
-    if (document.getElementById('xfs-btn-backdrop')) return;
-    const bd = document.createElement('div');
-    bd.id = 'xfs-btn-backdrop';
-    bd.style.cssText = [
-      'position:fixed', 'right:14px', 'bottom:196px',
-      'width:40px', 'height:160px',
-      'background:rgba(255,255,255,0.82)',
-      'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
-      `border:1.5px solid ${C.btnBorder}`,
-      'border-radius:20px',
-      'box-shadow:0 2px 16px rgba(0,0,0,0.12)',
-      'pointer-events:none',
-      'z-index:2147483645',
-    ].join(';');
-    document.body.appendChild(bd);
+
+    if (!document.getElementById('xfs-btn-backdrop')) {
+      const bd = document.createElement('div');
+      bd.id = 'xfs-btn-backdrop';
+      bd.style.cssText = [
+        'position:fixed', 'right:14px', 'bottom:196px',
+        'width:40px', 'height:240px',
+        'background:rgba(255,255,255,0.82)',
+        'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
+        `border:1.5px solid ${C.btnBorder}`,
+        'border-radius:20px',
+        'box-shadow:0 2px 16px rgba(0,0,0,0.12)',
+        'pointer-events:none',
+        'z-index:2147483644',
+      ].join(';');
+      document.body.appendChild(bd);
+    }
+
+    [
+      { id: 'content',  bottom: 316, height: 116, background: 'rgba(244,33,46,0.055)' },
+      { id: 'referral', bottom: 236, height: 76,  background: 'rgba(95,111,137,0.075)' },
+      { id: 'settings', bottom: 200, height: 32,  background: 'rgba(83,100,113,0.050)' },
+    ].forEach((section) => {
+      if (document.getElementById(`xfs-btn-section-${section.id}`)) return;
+      const el = document.createElement('div');
+      el.id = `xfs-btn-section-${section.id}`;
+      el.style.cssText = [
+        'position:fixed', 'right:16px', `bottom:${section.bottom}px`,
+        'width:36px', `height:${section.height}px`,
+        `background:${section.background}`,
+        'border-radius:18px',
+        'pointer-events:none',
+        'z-index:2147483645',
+      ].join(';');
+      document.body.appendChild(el);
+    });
+
+    [302, 226].forEach((bottom, i) => {
+      if (document.getElementById(`xfs-btn-sep-${i + 1}`)) return;
+      const sep = document.createElement('div');
+      sep.id = `xfs-btn-sep-${i + 1}`;
+      sep.style.cssText = [
+        'position:fixed', 'right:20px', `bottom:${bottom}px`,
+        'width:28px', 'height:2px',
+        `background:${C.btnBorder}`,
+        'opacity:0.9',
+        'border-radius:2px',
+        'pointer-events:none',
+        'z-index:2147483646',
+      ].join(';');
+      document.body.appendChild(sep);
+    });
   }
 
   function removeBtnBackdrop() {
     document.getElementById('xfs-btn-backdrop')?.remove();
+    document.querySelectorAll('[id^="xfs-btn-section-"],[id^="xfs-btn-sep-"]').forEach(el => el.remove());
   }
 
   function injectBtn() {
@@ -1632,14 +2125,19 @@
     if (isListPage()) return; // likes/retweets/followers use their own button
     injectHideBtn();
     injectBtnBackdrop();
+    injectReferralBtn();
     injectGearBtn();
+    if (!document.getElementById('xfs-referral-scan-btn')) {
+      document.body.appendChild(mkIconBtn(
+        'xfs-referral-scan-btn', SCAN_SVG, '扫描当前视图导流号并打开确认面板；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
+    }
     if (!document.getElementById('xfs-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-btn', SCAN_SVG, '当前视图垃圾号自动屏蔽', 240, C.blockRed, autoLoadAndScan));
+        'xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动屏蔽', 360, C.blockRed, autoLoadAndScan));
     }
     if (!document.getElementById('xfs-sweep-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-sweep-btn', SWEEP_SVG, '整页回复垃圾号一网打尽', 200, C.nameKw, () => {
+        'xfs-sweep-btn', SWEEP_SVG, '整页回复内容垃圾号一网打尽', 320, C.nameKw, () => {
           if (sweepHasRun) {
             // Second+ click: reload page first so already-blocked accounts are gone,
             // then auto-trigger sweep once the page has reloaded.
@@ -1655,8 +2153,10 @@
 
   function removeBtn() {
     document.getElementById('xfs-btn')?.remove();
+    document.getElementById('xfs-referral-scan-btn')?.remove();
     document.getElementById('xfs-sweep-btn')?.remove();
     removeGearBtn();
+    removeReferralBtn();
     removeHideBtn();
     removeBtnBackdrop();
   }
@@ -1678,9 +2178,86 @@
     document.getElementById('xfs-list-btn')?.remove();
   }
 
+  // ── Referral-account hide toggle button ──────────────────────────────
+  // Defaults on. Hides replies from accounts whose profile links to x.com handles.
+  function updateReferralBtn() {
+    const btn = document.getElementById('xfs-referral-btn');
+    if (!btn) return;
+    const badge = document.getElementById('xfs-referral-badge');
+    btn.textContent = EYE_SVG;
+    if (badge) btn.appendChild(badge);
+    btn.title = hideReferralActive
+      ? '导流号回复已隐藏，点击显示。受平台接口/限速影响，识别会稍有延迟'
+      : '点击隐藏 profile 含 x.com 链接的导流号回复。只检查已加载回复，识别会稍有延迟';
+    btn.style.background = hideReferralActive ? 'rgba(95,111,137,0.14)' : 'rgba(255,255,255,0.92)';
+    btn.style.border = hideReferralActive ? `2px solid ${C.referral}` : `2px dashed ${C.btnBorder}`;
+    btn.style.color = hideReferralActive ? C.referral : C.sub;
+    btn.style.opacity = hideReferralActive ? '1' : '0.55';
+    btn.style.boxShadow = hideReferralActive ? `0 0 0 2px ${C.referral}22,0 2px 8px rgba(0,0,0,0.16)` : '0 2px 8px rgba(0,0,0,0.12)';
+    updateReferralBadge();
+  }
+
+  function injectReferralBtn() {
+    if (!document.body) return;
+    if (document.getElementById('xfs-referral-btn')) return;
+    if (!/\/status\/\d/.test(location.pathname)) return;
+    if (isListPage()) return;
+
+    const btn = mkIconBtn('xfs-referral-btn', EYE_SVG, '', 280, C.referral, null);
+
+    const badge = document.createElement('span');
+    badge.id = 'xfs-referral-badge';
+    badge.style.cssText = [
+      'position:absolute', 'top:-5px', 'right:-5px',
+      'min-width:16px', 'height:16px',
+      `background:${C.referral}`, 'color:#fff',
+      'border-radius:8px', 'font-size:9px', 'font-weight:700',
+      'display:none', 'align-items:center', 'justify-content:center',
+      'padding:0 3px', 'box-sizing:border-box',
+      'pointer-events:none', 'line-height:1',
+    ].join(';');
+    btn.appendChild(badge);
+
+    btn.onclick = () => {
+      hideReferralActive = !hideReferralActive;
+      GM_setValue('hide_referral_accounts', hideReferralActive);
+      btn.textContent = EYE_SVG;
+      btn.appendChild(badge);
+      updateReferralBtn();
+      if (hideReferralActive) applyReferralForVisible();
+      applyHideAll();
+      showToast(hideReferralActive ? '导流号隐藏已开启' : '导流号隐藏已关闭', false);
+    };
+
+    document.body.appendChild(btn);
+    updateReferralBtn();
+    if (hideReferralActive) applyReferralForVisible();
+  }
+
+  function removeReferralBtn() {
+    document.getElementById('xfs-referral-btn')?.remove();
+  }
+
   // ── Hide-matched toggle button ───────────────────────────────────────
-  // Sits above the scan button (bottom:280). Collapses matched articles to a 1px gray
+  // Top button in the content-spam group. Collapses matched articles to a 1px gray
   // separator line. State persists across SPA navigations via GM storage.
+  function updateMatchedHideBtn() {
+    const btn = document.getElementById('xfs-hide-btn');
+    if (!btn) return;
+    const badge = document.getElementById('xfs-hide-badge');
+    btn.textContent = EYE_SVG;
+    if (badge) btn.appendChild(badge);
+    btn.title = hideMatchedActive
+      ? '内容垃圾号回复已隐藏，点击显示'
+      : '点击隐藏匹配关键词/正则的内容垃圾号回复';
+    btn.style.background = hideMatchedActive ? 'rgba(244,33,46,0.10)' : 'rgba(255,255,255,0.92)';
+    btn.style.border = hideMatchedActive ? `2px solid ${C.blockRed}` : `2px dashed ${C.btnBorder}`;
+    btn.style.color = hideMatchedActive ? C.blockRed : C.sub;
+    btn.style.opacity = hideMatchedActive ? '1' : '0.55';
+    btn.style.boxShadow = hideMatchedActive ? `0 0 0 2px ${C.blockRed}22,0 2px 8px rgba(0,0,0,0.16)` : '0 2px 8px rgba(0,0,0,0.12)';
+    updateHideBadge();
+  }
+
   function injectHideBtn() {
     if (!document.body) return;
     if (document.getElementById('xfs-hide-btn')) return;
@@ -1689,11 +2266,10 @@
 
     const btn = mkIconBtn(
       'xfs-hide-btn',
-      hideMatchedActive ? EYE_SLASH_SVG : EYE_SVG,
-      hideMatchedActive ? '垃圾回复已隐藏，点击显示' : '点击隐藏匹配的垃圾回复',
-      280, C.sub, null
+      EYE_SVG,
+      hideMatchedActive ? '内容垃圾号回复已隐藏，点击显示' : '点击隐藏匹配关键词/正则的内容垃圾号回复',
+      400, C.sub, null
     );
-    btn.style.background = hideMatchedActive ? 'rgba(83,100,113,0.12)' : 'rgba(255,255,255,0.92)';
 
     // Badge: shows count of matched handles accumulated this scroll session
     const badge = document.createElement('span');
@@ -1712,17 +2288,13 @@
     btn.onclick = () => {
       hideMatchedActive = !hideMatchedActive;
       GM_setValue('hide_matched', hideMatchedActive);
-      btn.textContent = hideMatchedActive ? EYE_SLASH_SVG : EYE_SVG;
-      btn.appendChild(badge); // re-attach badge after textContent reset
-      btn.title = hideMatchedActive ? '垃圾回复已隐藏，点击显示' : '点击隐藏匹配的垃圾回复';
-      btn.style.background = hideMatchedActive ? 'rgba(83,100,113,0.12)' : 'rgba(255,255,255,0.92)';
+      updateMatchedHideBtn();
       applyHideAll();
-      updateHideBadge();
     };
 
     document.body.appendChild(btn);
+    updateMatchedHideBtn();
     applyHideAll();
-    updateHideBadge();
   }
 
   function removeHideBtn() {
@@ -1764,7 +2336,7 @@
   function routeButtonsReady() {
     const p = location.pathname;
     const ids = isListPage(p) ? ['xfs-list-btn']
-              : /\/status\/\d/.test(p) ? ['xfs-hide-btn', 'xfs-btn', 'xfs-sweep-btn', 'xfs-gear-btn']
+              : /\/status\/\d/.test(p) ? ['xfs-btn-backdrop', 'xfs-hide-btn', 'xfs-referral-btn', 'xfs-btn', 'xfs-referral-scan-btn', 'xfs-sweep-btn', 'xfs-gear-btn']
               : p === '/home' ? ['xfs-mute-btn'] : [];
     return ids.every(id => document.getElementById(id));
   }
