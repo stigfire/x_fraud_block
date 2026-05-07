@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.55
+// @version      5.56
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -1867,6 +1867,7 @@
       'z-index:2',
     ].join(';');
 
+    let regexRulesOpen = false;
     function renderKwBar() {
       kwBar.innerHTML = '';
       const rowCss = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
@@ -1963,60 +1964,75 @@
       kwBar.appendChild(textRow);
 
       // ── Row 3: RegEx patterns ──
-      const reRow = document.createElement('div');
-      reRow.style.cssText = rowCss;
+      const reSection = document.createElement('div');
+      reSection.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+      const reHeader = document.createElement('div');
+      reHeader.style.cssText = rowCss;
+      const reToggle = document.createElement('button');
+      reToggle.type = 'button';
+      reToggle.textContent = regexRulesOpen ? '▾' : '▸';
+      reToggle.title = regexRulesOpen ? '收起正则规则' : '展开正则规则';
+      reToggle.style.cssText = `width:20px;height:20px;padding:0;border:1px solid ${C.regexKw};border-radius:7px;background:#fff;color:${C.regexKw};font-size:12px;font-weight:800;line-height:18px;cursor:pointer;`;
+      reToggle.onclick = () => { regexRulesOpen = !regexRulesOpen; refreshKwPanel(); };
       const reLbl = document.createElement('span');
-      reLbl.textContent = '正则:';
-      reLbl.style.cssText = `font-size:10px;color:${C.regexKw};flex-shrink:0;min-width:36px;`;
-      reRow.appendChild(reLbl);
-      SUSPECT_RE_KWS.forEach((pat, i) => {
-        const chip = document.createElement('span');
-        chip.title = pat;
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:360px;`;
-        const lbl = document.createElement('span');
-        lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        lbl.textContent = pat;
-        const del = document.createElement('button');
-        del.textContent = '×';
-        del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.regexKw};padding:0;line-height:1;flex-shrink:0;`;
-        del.onclick = () => { SUSPECT_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
-        chip.appendChild(lbl);
-        chip.appendChild(del);
-        reRow.appendChild(chip);
-      });
-      const reInp = document.createElement('input');
-      reInp.placeholder = '+ 正则';
-      reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 content: 或 name: 限定匹配范围';
-      reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
-      const addRe = () => {
-        const v = reInp.value.trim();
-        if (!v) return;
-        const parsed = _regexPatternParts(v);
-        try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
-        reInp.style.borderColor = C.regexKw;
-        if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); refreshKwPanel(); }
-        else reInp.value = '';
-      };
-      reInp.onkeydown = e => { if (e.key === 'Enter') addRe(); };
-      reInp.oninput   = () => {
-        const v = reInp.value.trim();
-        if (!v) { reInp.style.borderColor = C.regexKw; return; }
-        const parsed = _regexPatternParts(v);
-        try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); reInp.style.borderColor = C.regexKw; }
-        catch (_) { reInp.style.borderColor = C.blockRed; }
-      };
-      reRow.appendChild(reInp);
-      const addReBtn = document.createElement('button');
-      addReBtn.textContent = '+';
-      addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-      addReBtn.onclick = addRe;
-      reRow.appendChild(addReBtn);
+      reLbl.textContent = `正则 (${SUSPECT_RE_KWS.length})`;
+      reLbl.style.cssText = `font-size:10px;color:${C.regexKw};font-weight:700;flex-shrink:0;`;
       const reTip = document.createElement('span');
       reTip.textContent = '?';
       reTip.title = '正则很有效，懂的话可以新增；不懂建议别删，删除会明显削弱匹配。';
       reTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.regexKw};border-radius:50%;font-size:10px;font-weight:700;color:${C.regexKw};cursor:help;`;
-      reRow.appendChild(reTip);
-      kwBar.appendChild(reRow);
+      reHeader.appendChild(reToggle);
+      reHeader.appendChild(reLbl);
+      reHeader.appendChild(reTip);
+      reSection.appendChild(reHeader);
+      if (regexRulesOpen) {
+        const reRow = document.createElement('div');
+        reRow.style.cssText = rowCss;
+        SUSPECT_RE_KWS.forEach((pat, i) => {
+          const chip = document.createElement('span');
+          chip.title = pat;
+          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:360px;`;
+          const lbl = document.createElement('span');
+          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          lbl.textContent = pat;
+          const del = document.createElement('button');
+          del.textContent = '×';
+          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.regexKw};padding:0;line-height:1;flex-shrink:0;`;
+          del.onclick = () => { SUSPECT_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+          chip.appendChild(lbl);
+          chip.appendChild(del);
+          reRow.appendChild(chip);
+        });
+        const reInp = document.createElement('input');
+        reInp.placeholder = '+ 正则';
+        reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 content: 或 name: 限定匹配范围';
+        reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
+        const addRe = () => {
+          const v = reInp.value.trim();
+          if (!v) return;
+          const parsed = _regexPatternParts(v);
+          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
+          reInp.style.borderColor = C.regexKw;
+          if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); refreshKwPanel(); }
+          else reInp.value = '';
+        };
+        reInp.onkeydown = e => { if (e.key === 'Enter') addRe(); };
+        reInp.oninput   = () => {
+          const v = reInp.value.trim();
+          if (!v) { reInp.style.borderColor = C.regexKw; return; }
+          const parsed = _regexPatternParts(v);
+          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); reInp.style.borderColor = C.regexKw; }
+          catch (_) { reInp.style.borderColor = C.blockRed; }
+        };
+        reRow.appendChild(reInp);
+        const addReBtn = document.createElement('button');
+        addReBtn.textContent = '+';
+        addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
+        addReBtn.onclick = addRe;
+        reRow.appendChild(addReBtn);
+        reSection.appendChild(reRow);
+      }
+      kwBar.appendChild(reSection);
     }
     renderKwBar();
     kwBar.style.display = opts.keywordsOpen ? 'flex' : 'none'; // popup, collapsed by default
