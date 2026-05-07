@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.61
+// @version      5.62
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -1812,6 +1812,20 @@
     referral: { label: '导流号',             color: C.referral },
   };
 
+  function shortRuleHash(text) {
+    let h = 2166136261;
+    for (const ch of String(text || '')) {
+      h ^= ch.codePointAt(0) || 0;
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36).slice(0, 6).toUpperCase();
+  }
+
+  function regexRuleLabel(pattern) {
+    const idx = SUSPECT_RE_KWS.findIndex(pat => pat === pattern);
+    return idx >= 0 ? `正则 ${idx + 1}` : `正则 ${shortRuleHash(pattern)}`;
+  }
+
   function showHideRuleStatsPanel() {
     document.getElementById('xfs-rule-stats-panel')?.remove();
     const stats = Object.values(loadHideRuleStats())
@@ -1880,7 +1894,7 @@
         const mid = document.createElement('div');
         mid.style.cssText = 'min-width:0;';
         const key = document.createElement('div');
-        key.textContent = item.key;
+        key.textContent = type === 'regex' ? regexRuleLabel(item.key) : item.key;
         key.title = item.key;
         key.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px;';
         const barWrap = document.createElement('div');
