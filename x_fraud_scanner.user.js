@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.57
+// @version      5.58
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -2127,9 +2127,15 @@
       reTip.textContent = '?';
       reTip.title = '正则很有效，懂的话可以新增；不懂建议别删，删除会明显削弱匹配。';
       reTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.regexKw};border-radius:50%;font-size:10px;font-weight:700;color:${C.regexKw};cursor:help;`;
+      const statsBtn = document.createElement('button');
+      statsBtn.textContent = '统计';
+      statsBtn.title = '查看每条内容规则累计隐藏了多少次回复';
+      statsBtn.style.cssText = `margin-left:auto;border:1px solid ${C.btnBorder};background:#fff;color:${C.sub};border-radius:8px;padding:3px 7px;font-size:10px;cursor:pointer;`;
+      statsBtn.onclick = showHideRuleStatsPanel;
       reHeader.appendChild(reToggle);
       reHeader.appendChild(reLbl);
       reHeader.appendChild(reTip);
+      reHeader.appendChild(statsBtn);
       reSection.appendChild(reHeader);
       if (regexRulesOpen) {
         const reRow = document.createElement('div');
@@ -2176,12 +2182,6 @@
         addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
         addReBtn.onclick = addRe;
         reRow.appendChild(addReBtn);
-        const statsBtn = document.createElement('button');
-        statsBtn.textContent = '统计';
-        statsBtn.title = '查看每条内容规则累计隐藏了多少次回复';
-        statsBtn.style.cssText = `margin-left:auto;border:1px solid ${C.btnBorder};background:#fff;color:${C.sub};border-radius:8px;padding:3px 7px;font-size:10px;cursor:pointer;`;
-        statsBtn.onclick = showHideRuleStatsPanel;
-        reRow.appendChild(statsBtn);
         reSection.appendChild(reRow);
       }
       kwBar.appendChild(reSection);
