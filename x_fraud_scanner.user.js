@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.64
+// @version      5.65
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -1885,6 +1885,35 @@
     return idx >= 0 ? `正则 ${idx + 1}` : `正则 ${shortRuleHash(pattern)}`;
   }
 
+  function shortTooltipText(value, max = 120) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  }
+
+  function hitTooltipFromMatchInfo(matchInfo) {
+    const lines = [];
+    const add = line => {
+      const text = shortTooltipText(line, 180);
+      if (text && !lines.includes(text)) lines.push(text);
+    };
+    (matchInfo.heartHits || []).forEach(hit => add(`用户名心形: ${hit}`));
+    (matchInfo.nameKwHits || []).forEach(kw => add(`用户名关键词: ${kw}`));
+    (matchInfo.kwHits || []).forEach(hit => add(`内容关键词: ${hit.kw}${hit.snippet ? ` / ${hit.snippet}` : ''}`));
+    (matchInfo.reHits || []).forEach(hit => add(`${regexRuleLabel(hit.pat)}: ${hit.snippet || shortTooltipText(hit.pat, 80)}`));
+    return lines.slice(0, 8).join('\n');
+  }
+
+  function hitTooltipFromUser(user) {
+    const lines = [];
+    if (user?.cats?.has?.('referral')) {
+      const ref = user.kwHits?.find?.(hit => hit.kw === '导流号' || hit.kw === '新号') || user.kwHits?.[0];
+      lines.push(`${ref?.kw || '导流号'}: ${shortTooltipText(ref?.snippet || user.tweetSnippet || '账号主页规则命中')}`);
+    }
+    const matchText = hitTooltipFromMatchInfo(user || {});
+    if (matchText) lines.push(matchText);
+    return lines.join('\n');
+  }
+
   function showHideRuleStatsPanel() {
     document.getElementById('xfs-rule-stats-panel')?.remove();
     const stats = Object.values(loadHideRuleStats())
@@ -2455,6 +2484,7 @@
 
         const row = document.createElement('label');
         row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px 5px 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
+        row.title = hitTooltipFromUser(user);
         row.onmouseenter = () => { if (!row.dataset.blocked) row.style.background = C.rowHover; };
         row.onmouseleave = () => { if (!row.dataset.blocked) row.style.background = ''; };
 
@@ -3019,6 +3049,8 @@
       const btn = art.querySelector(`button[data-xfs-handle]`);
       if (btn) {
         btn.dataset.xfsMatched = (matched && !alreadyBlocked) ? '1' : '0';
+        if (matched && !alreadyBlocked) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits });
+        else delete btn.dataset.xfsMatchTooltip;
         updateInlineBlockButton(btn);
       }
       if (matched && !alreadyBlocked) {
@@ -3064,7 +3096,9 @@
     btn.style.background = isBlocked ? `${C.mute}18` : 'transparent';
     const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : '');
     const handle = btn.dataset.xfsHandle || '';
-    btn.title = prefix + (isBlocked ? `已屏蔽 · 点击取消 @${handle}` : `屏蔽 @${handle}`);
+    const details = [btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
+    btn.title = prefix + (isBlocked ? `已屏蔽 · 点击取消 @${handle}` : `屏蔽 @${handle}`)
+      + (details ? `\n\n命中规则:\n${details}` : '');
   }
 
   function setReferralButtons(handle, item) {
@@ -3074,6 +3108,8 @@
       if (normalizeHandle(btn.dataset.xfsHandle) !== key) return;
       btn.dataset.xfsReferralAccount = isReferral ? '1' : '0';
       if (isReferral && item.urls?.length) btn.dataset.xfsReferralUrl = item.urls[0];
+      if (isReferral) btn.dataset.xfsReferralTooltip = `导流号: ${referralItemDescription(item)}`;
+      else delete btn.dataset.xfsReferralTooltip;
       updateInlineBlockButton(btn);
     });
   }
@@ -3747,9 +3783,11 @@
       btn.dataset.xfsHandle  = handle;
       btn.dataset.xfsState   = alreadyBlocked ? 'blocked' : 'unblocked';
       btn.dataset.xfsMatched = matched ? '1' : '0';
+      if (matched) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits });
       const referral = referralReason(handle);
       btn.dataset.xfsReferralAccount = referral ? '1' : '0';
       if (referral?.urls?.length) btn.dataset.xfsReferralUrl = referral.urls[0];
+      if (referral) btn.dataset.xfsReferralTooltip = `导流号: ${referralItemDescription(referral)}`;
       btn.textContent = alreadyBlocked ? IBTN_CHECK_SVG : IBTN_BLOCK_SVG;
 
       // Use explicit properties only — 'all:unset' resets display and causes invisible buttons.
