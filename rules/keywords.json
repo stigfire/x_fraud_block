@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-07.4",
+  "rulesVersion": "2026-05-07.5",
   "updatedAt": "2026-05-07T00:00:00Z",
   "contentKeywords": [],
   "nameKeywords": [
@@ -8,6 +8,7 @@
   ],
   "regexKeywords": [
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,200}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){4,})[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,100}(?![\\s\\S]))(?=[\\s\\S]*想找个)[\\s\\S]+"
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,100}(?![\\s\\S]))(?=[\\s\\S]*想找个)[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){3,})[\\s\\S]+"
   ]
 }
