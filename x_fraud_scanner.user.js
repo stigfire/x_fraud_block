@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.52
+// @version      5.53
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -13,6 +13,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      x.com
+// @connect      raw.githubusercontent.com
 // @run-at       document-start
 // ==/UserScript==
 
@@ -44,6 +45,21 @@
     `(?:${DECOR_SYMBOL_RUN_SRC}\\s*(?:${NON_FACE_EMOJI_SRC}\\s*){2,}|(?:${NON_FACE_EMOJI_SRC}\\s*){2,}${DECOR_SYMBOL_RUN_SRC})`,
     '[\\u02B0-\\u02FF\\u1D2C-\\u1D7F\\u1D80-\\u1DBF\\u2070-\\u209F]{3,}',
   ];
+  const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
+  const REMOTE_RULES_FETCH_INTERVAL = 60 * 60 * 1000;
+  const REMOTE_RULES_MAX_BYTES = 100 * 1024;
+  const REMOTE_RULE_LIMITS = {
+    content: 300,
+    name: 300,
+    regex: 80,
+    keywordLen: 120,
+    regexLen: 240,
+  };
+  let remoteRulesActive = !!GM_getValue('remote_rules_active', false);
+  let remoteRegexRulesActive = !!GM_getValue('remote_regex_rules_active', false);
+  let remoteRulesCache = null;
+  let remoteRulesFetching = false;
+  let remoteRulesLastError = GM_getValue('remote_rules_last_error', '');
   // Keyword storage: only user additions/deletions are persisted.
   // Defaults are always merged in at startup, so new script-level presets
   // appear automatically even when the user has existing stored data.
@@ -62,24 +78,81 @@
     }
     return out;
   }
+  function _limitRemoteList(list, limit, maxLen, isRegex = false) {
+    const out = [];
+    for (const item of _cleanKwList(list)) {
+      if (item.length > maxLen) continue;
+      if (isRegex) {
+        try { new RegExp(item, 'mu'); } catch (_) { continue; }
+      }
+      out.push(item);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+  function _remoteArray(obj, key) {
+    if (Array.isArray(obj?.[key])) return obj[key];
+    if (Array.isArray(obj?.rules?.[key])) return obj.rules[key];
+    return [];
+  }
+  function sanitizeRemoteRulesPayload(payload, fetchedAt = 0) {
+    const obj = payload && typeof payload === 'object' ? payload : {};
+    const rules = {
+      contentKeywords: _limitRemoteList(_remoteArray(obj, 'contentKeywords'), REMOTE_RULE_LIMITS.content, REMOTE_RULE_LIMITS.keywordLen),
+      nameKeywords: _limitRemoteList(_remoteArray(obj, 'nameKeywords'), REMOTE_RULE_LIMITS.name, REMOTE_RULE_LIMITS.keywordLen),
+      regexKeywords: _limitRemoteList(_remoteArray(obj, 'regexKeywords'), REMOTE_RULE_LIMITS.regex, REMOTE_RULE_LIMITS.regexLen, true),
+    };
+    return {
+      schemaVersion: Number(obj.schemaVersion) || 1,
+      rulesVersion: String(obj.rulesVersion || obj.version || '').slice(0, 48),
+      updatedAt: String(obj.updatedAt || '').slice(0, 48),
+      fetchedAt: Number(fetchedAt || obj.fetchedAt || 0) || 0,
+      rules,
+    };
+  }
+  function loadRemoteRulesCache() {
+    try {
+      const cached = sanitizeRemoteRulesPayload(GM_getValue('remote_rules_cache', null));
+      const total = cached.rules.contentKeywords.length + cached.rules.nameKeywords.length + cached.rules.regexKeywords.length;
+      remoteRulesCache = total > 0 || cached.rulesVersion ? cached : null;
+    } catch (_) {
+      remoteRulesCache = null;
+    }
+  }
+  loadRemoteRulesCache();
+  function remoteDefaultsForKey(key) {
+    if (!remoteRulesActive || !remoteRulesCache?.rules) return [];
+    if (key === 'suspect_kws') return remoteRulesCache.rules.contentKeywords || [];
+    if (key === 'suspect_name_kws') return remoteRulesCache.rules.nameKeywords || [];
+    if (key === 'suspect_re_kws') return remoteRegexRulesActive ? (remoteRulesCache.rules.regexKeywords || []) : [];
+    return [];
+  }
+  function _combinedDefaults(defaults, key) {
+    return _cleanKwList([...defaults, ...remoteDefaultsForKey(key)]);
+  }
   function _sameList(a, b) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
   }
   function _loadKws(defaults, key) {
+    const activeDefaults = _combinedDefaults(defaults, key);
     const rawAdds = GM_getValue(key + '_add', []);
     const rawAddList = Array.isArray(rawAdds) ? rawAdds : [];
-    const defNorms = new Set(defaults.map(_normKw));
+    const defNorms = new Set(activeDefaults.map(_normKw));
     const adds = _cleanKwList(rawAddList).filter(k => !defNorms.has(_normKw(k)));
     if (!_sameList(rawAddList, adds)) GM_setValue(key + '_add', adds);
-    const dels = new Set(GM_getValue(key + '_del', []));
-    return [...new Set([...defaults, ...adds])].filter(k => !dels.has(k));
+    const delNorms = new Set((GM_getValue(key + '_del', []) || []).map(_normKw));
+    return _cleanKwList([...activeDefaults, ...adds]).filter(k => !delNorms.has(_normKw(k)));
   }
   function _saveKwSet(live, defaults, key) {
+    const activeDefaults = _combinedDefaults(defaults, key);
     const cleanLive = _cleanKwList(live);
-    const defNorms = new Set(defaults.map(_normKw));
+    const defNorms = new Set(activeDefaults.map(_normKw));
     const liveNorms = new Set(cleanLive.map(_normKw));
+    const activeDefaultNorms = new Set(activeDefaults.map(_normKw));
+    const preservedDels = _cleanKwList(GM_getValue(key + '_del', []))
+      .filter(k => !activeDefaultNorms.has(_normKw(k)) && !liveNorms.has(_normKw(k)));
     GM_setValue(key + '_add', cleanLive.filter(k => !defNorms.has(_normKw(k))));
-    GM_setValue(key + '_del', defaults.filter(k => !liveNorms.has(_normKw(k))));
+    GM_setValue(key + '_del', _cleanKwList([...preservedDels, ...activeDefaults.filter(k => !liveNorms.has(_normKw(k)))]));
   }
   let SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
   let SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
@@ -202,6 +275,92 @@
       const kwBar = document.getElementById('xfs-kw-bar');
       showPanel(scanPage(), { keywordsOpen: !kwBar || kwBar.style.display !== 'none' });
     }
+  }
+
+  function remoteRulesSummary() {
+    if (!remoteRulesCache?.rules) return '尚未拉取';
+    const c = remoteRulesCache.rules.contentKeywords.length;
+    const n = remoteRulesCache.rules.nameKeywords.length;
+    const r = remoteRulesCache.rules.regexKeywords.length;
+    const ver = remoteRulesCache.rulesVersion ? ` · ${remoteRulesCache.rulesVersion}` : '';
+    return `内容 ${c} / 用户名 ${n} / 正则 ${r}${ver}`;
+  }
+
+  function remoteRulesFetchedText() {
+    const ts = Number(remoteRulesCache?.fetchedAt || 0);
+    if (!ts) return '从未更新';
+    try { return new Date(ts).toLocaleString(); }
+    catch (_) { return '已更新'; }
+  }
+
+  function refreshKeywordPanelIfOpen() {
+    const panel = document.getElementById('xfs-panel');
+    const kwBar = document.getElementById('xfs-kw-bar');
+    if (!panel || !kwBar) return;
+    showPanel(scanPage(), { keywordsOpen: kwBar.style.display !== 'none' });
+  }
+
+  function requestRemoteRulesPayload() {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: `${REMOTE_RULES_URL}?t=${Date.now()}`,
+        headers: { accept: 'application/json' },
+        timeout: 15000,
+        onload(resp) {
+          if (resp.status < 200 || resp.status >= 300) {
+            reject(new Error(`HTTP ${resp.status}`));
+            return;
+          }
+          const text = String(resp.responseText || '');
+          if (text.length > REMOTE_RULES_MAX_BYTES) {
+            reject(new Error('remote rules file too large'));
+            return;
+          }
+          try {
+            resolve(JSON.parse(text));
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onerror() { reject(new Error('network error')); },
+        ontimeout() { reject(new Error('timeout')); },
+      });
+    });
+  }
+
+  async function refreshRemoteRules(opts = {}) {
+    const force = !!opts.force;
+    const silent = !!opts.silent;
+    if (!remoteRulesActive || remoteRulesFetching) return false;
+    const last = Number(remoteRulesCache?.fetchedAt || 0);
+    if (!force && last && Date.now() - last < REMOTE_RULES_FETCH_INTERVAL) return false;
+    remoteRulesFetching = true;
+    try {
+      const payload = await requestRemoteRulesPayload();
+      const nextCache = sanitizeRemoteRulesPayload(payload, Date.now());
+      remoteRulesCache = nextCache;
+      remoteRulesLastError = '';
+      GM_setValue('remote_rules_cache', remoteRulesCache);
+      GM_setValue('remote_rules_last_error', '');
+      reloadKws();
+      refreshKeywordPanelIfOpen();
+      if (!silent) showToast(`远程规则已更新：${remoteRulesSummary()}`, false);
+      return true;
+    } catch (e) {
+      remoteRulesLastError = e?.message || String(e);
+      GM_setValue('remote_rules_last_error', remoteRulesLastError);
+      console.warn('[XFS] remote rules refresh failed:', e);
+      if (!silent) showToast(`远程规则更新失败：${remoteRulesLastError}`, true);
+      return false;
+    } finally {
+      remoteRulesFetching = false;
+    }
+  }
+
+  function scheduleRemoteRulesRefresh() {
+    setTimeout(() => refreshRemoteRules({ silent: true }), 5000);
+    setInterval(() => refreshRemoteRules({ silent: true }), REMOTE_RULES_FETCH_INTERVAL);
   }
 
   // ── Config ───────────────────────────────────────────────────────────
@@ -2922,7 +3081,7 @@
     p.id = 'xfs-tools-panel';
     p.style.cssText = [
       'position:fixed', `right:${toolbarRightPx(40)}`, `bottom:${toolbarBottomPx(166)}`,
-      'width:176px', 'padding:8px',
+      'width:210px', 'padding:8px',
       'background:rgba(255,255,255,0.96)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
       `border:1px solid ${C.btnBorder}`,
@@ -2974,6 +3133,68 @@
     autoReferralBtn.style.borderColor = autoReferralDetectActive ? C.referralHot : C.btnBorder;
     autoReferralBtn.style.color = autoReferralDetectActive ? C.referralHot : C.sub;
     autoReferralBtn.style.background = autoReferralDetectActive ? '#fff8ed' : '#fff';
+
+    function refreshRemoteRulesControls() {
+      remoteRulesBtn.textContent = `远程规则订阅：${remoteRulesActive ? '开' : '关'}`;
+      remoteRulesBtn.style.borderColor = remoteRulesActive ? C.nameKw : C.btnBorder;
+      remoteRulesBtn.style.color = remoteRulesActive ? C.nameKw : C.sub;
+      remoteRulesBtn.style.background = remoteRulesActive ? '#f2fbfc' : '#fff';
+      remoteRegexBtn.textContent = `远程正则规则：${remoteRegexRulesActive ? '开' : '关'}`;
+      remoteRegexBtn.style.borderColor = remoteRegexRulesActive ? C.regexKw : C.btnBorder;
+      remoteRegexBtn.style.color = remoteRegexRulesActive ? C.regexKw : C.sub;
+      remoteRegexBtn.style.background = remoteRegexRulesActive ? '#f2fbfc' : '#fff';
+      remoteUpdateBtn.textContent = remoteRulesFetching ? '正在更新...' : '立即更新远程规则';
+      remoteUpdateBtn.disabled = !remoteRulesActive || remoteRulesFetching;
+      remoteUpdateBtn.style.opacity = remoteUpdateBtn.disabled ? '0.55' : '1';
+      remoteUpdateBtn.style.cursor = remoteUpdateBtn.disabled ? 'default' : 'pointer';
+      remoteStatus.textContent = remoteRulesActive
+        ? `${remoteRulesSummary()} · ${remoteRulesFetchedText()}`
+        : '默认关闭；开启后每小时从 GitHub 拉取一次。';
+      remoteStatus.title = remoteRulesLastError ? `上次失败：${remoteRulesLastError}` : remoteStatus.textContent;
+    }
+
+    const remoteWrap = document.createElement('div');
+    remoteWrap.style.cssText = `border:1px solid ${C.nameKw};background:#f7feff;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
+    const remoteTitle = document.createElement('div');
+    remoteTitle.textContent = '远程规则订阅';
+    remoteTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.nameKw};`;
+    const remoteNote = document.createElement('div');
+    remoteNote.textContent = '默认关闭。远程规则来自 GitHub，只做单向拉取；失败时沿用本地缓存。正则规则另设开关。';
+    remoteNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
+    const remoteStatus = document.createElement('div');
+    remoteStatus.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};word-break:break-word;`;
+    const remoteRulesBtn = mkToolBtn('', () => {
+      remoteRulesActive = !remoteRulesActive;
+      GM_setValue('remote_rules_active', remoteRulesActive);
+      reloadKws();
+      refreshKeywordPanelIfOpen();
+      refreshRemoteRulesControls();
+      showToast(remoteRulesActive ? '远程规则订阅已开启' : '远程规则订阅已关闭', false);
+      if (remoteRulesActive) {
+        refreshRemoteRules({ force: true, silent: false }).then(refreshRemoteRulesControls);
+        refreshRemoteRulesControls();
+      }
+    });
+    const remoteRegexBtn = mkToolBtn('', () => {
+      remoteRegexRulesActive = !remoteRegexRulesActive;
+      GM_setValue('remote_regex_rules_active', remoteRegexRulesActive);
+      reloadKws();
+      refreshKeywordPanelIfOpen();
+      refreshRemoteRulesControls();
+      showToast(remoteRegexRulesActive ? '远程正则规则已开启' : '远程正则规则已关闭', false);
+    });
+    const remoteUpdateBtn = mkToolBtn('', () => {
+      refreshRemoteRulesControls();
+      refreshRemoteRules({ force: true, silent: false }).then(refreshRemoteRulesControls);
+    });
+    remoteUpdateBtn.title = '手动从 GitHub 拉取最新远程规则';
+    remoteWrap.appendChild(remoteTitle);
+    remoteWrap.appendChild(remoteRulesBtn);
+    remoteWrap.appendChild(remoteRegexBtn);
+    remoteWrap.appendChild(remoteUpdateBtn);
+    remoteWrap.appendChild(remoteStatus);
+    remoteWrap.appendChild(remoteNote);
+    refreshRemoteRulesControls();
 
     const youngWrap = document.createElement('div');
     youngWrap.style.cssText = `border:1px solid ${C.blockRed};background:#fff7f7;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
@@ -3072,6 +3293,7 @@
     editBtn.style.background = '#f2fbfc';
     editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
     p.appendChild(editBtn);
+    p.appendChild(remoteWrap);
     p.appendChild(autoReferralBtn);
     p.appendChild(youngWrap);
     p.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
@@ -3802,6 +4024,7 @@
   }
 
   exposeDebugTools();
+  scheduleRemoteRulesRefresh();
   startUI();
   document.addEventListener('DOMContentLoaded', startUI);
   window.addEventListener('load', startUI);
