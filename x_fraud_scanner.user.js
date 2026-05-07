@@ -3091,7 +3091,7 @@
       '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角屏蔽按钮会变橙色。',
       '',
-      '新注册账号辅助规则：默认关闭。开启后，会在导流号 profile 查询时顺手检查注册时间，并把少于所选天数或晚于所选日期注册的账号也标成橙色。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，实际收益有限，而且新号不一定是垃圾号，误伤风险较高。',
+      '屏蔽新注册账号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的屏蔽候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
       '内容扫描按钮会打开确认面板；导流扫描按钮会直接屏蔽当前视图命中的导流号。',
     ].join('\n'));
@@ -3138,7 +3138,7 @@
     }
 
     function refreshYoungAccountControls() {
-      youngAccountBtn.textContent = `新注册辅助：${youngAccountFilterActive ? '开' : '关'}`;
+      youngAccountBtn.textContent = `屏蔽新注册账号：${youngAccountFilterActive ? '开' : '关'}`;
       youngAccountBtn.style.borderColor = youngAccountFilterActive ? C.blockRed : C.btnBorder;
       youngAccountBtn.style.color = youngAccountFilterActive ? C.blockRed : C.sub;
       youngAccountBtn.style.background = youngAccountFilterActive ? '#fff1f1' : '#fff';
@@ -3230,17 +3230,17 @@
     const youngWrap = document.createElement('div');
     youngWrap.style.cssText = `border:1px solid ${C.blockRed};background:#fff7f7;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
     const youngTitle = document.createElement('div');
-    youngTitle.textContent = '高误伤：新注册账号辅助规则';
+    youngTitle.textContent = '高误伤：屏蔽新注册账号';
     youngTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.blockRed};`;
     const youngNote = document.createElement('div');
-    youngNote.textContent = '默认关闭。需要逐个查 profile，速度慢，容易限流；新号不一定是垃圾号。';
+    youngNote.textContent = '默认关闭。开启后，新注册账号会进入橙标和导流扫描屏蔽候选；需要逐个查 profile，速度慢，容易限流，新号不一定是垃圾号。';
     youngNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const youngAccountBtn = mkToolBtn('', () => {
       youngAccountFilterActive = !youngAccountFilterActive;
       GM_setValue('young_account_filter_active', youngAccountFilterActive);
       refreshYoungAccountControls();
       if (youngAccountFilterActive) applyReferralForVisible();
-      showToast(youngAccountFilterActive ? `新注册辅助已开启：${youngAccountRuleLabel()}` : '新注册辅助已关闭', false);
+      showToast(youngAccountFilterActive ? `屏蔽新注册账号已开启：${youngAccountRuleLabel()}` : '屏蔽新注册账号已关闭', false);
     });
     const youngRow = document.createElement('label');
     youngRow.style.cssText = `display:flex;align-items:center;gap:6px;font-size:11px;color:${C.text};`;
@@ -3265,7 +3265,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`新注册辅助已切换为${youngAccountCutoffMode === 'date' ? '按日期' : '按天数'}`, false);
+      showToast(`屏蔽新注册账号已切换为${youngAccountCutoffMode === 'date' ? '按日期' : '按天数'}`, false);
     };
     const youngAccountSelect = document.createElement('select');
     youngAccountSelect.style.cssText = `flex:1;min-width:0;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px;`;
@@ -3289,7 +3289,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`新号阈值已设为 ${youngAccountMaxAgeDays} 天`, false);
+      showToast(`屏蔽新注册账号阈值已设为 ${youngAccountMaxAgeDays} 天`, false);
     };
     youngDateInput.onchange = () => {
       youngAccountCutoffDate = normalizeDateInputValue(youngDateInput.value);
@@ -3301,7 +3301,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`新号日期已设为 ${youngAccountCutoffDate}`, false);
+      showToast(`屏蔽新注册账号日期已设为 ${youngAccountCutoffDate}`, false);
     };
     const youngRowText = document.createElement('span');
     youngRowText.textContent = '少于';
