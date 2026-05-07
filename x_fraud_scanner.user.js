@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.56
+// @version      5.57
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -1524,6 +1524,58 @@
     return { matched: cats.size > 0, cats, heartHits, nameKwHits, kwHits, reHits };
   }
 
+  const HIDE_RULE_STATS_KEY = 'hide_rule_hit_stats_v1';
+  const HIDE_RULE_TYPE_LABELS = {
+    name: '用户名关键词',
+    content: '内容关键词',
+    regex: '正则',
+  };
+
+  function hideRuleStatItems(matchInfo) {
+    const seen = new Set();
+    const out = [];
+    const add = (type, key) => {
+      const value = String(key || '').trim();
+      const id = `${type}\n${value}`;
+      if (!value || seen.has(id)) return;
+      seen.add(id);
+      out.push({ type, key: value });
+    };
+    (matchInfo.nameKwHits || []).forEach(kw => add('name', kw));
+    (matchInfo.kwHits || []).forEach(hit => add('content', hit.kw));
+    (matchInfo.reHits || []).forEach(hit => add('regex', hit.pat));
+    return out;
+  }
+
+  function setArticleHideRuleStats(art, matchInfo) {
+    const items = hideRuleStatItems(matchInfo);
+    if (items.length) art.dataset.xfsHideRuleStats = JSON.stringify(items);
+    else delete art.dataset.xfsHideRuleStats;
+  }
+
+  function loadHideRuleStats() {
+    const raw = GM_getValue(HIDE_RULE_STATS_KEY, {});
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  }
+
+  function incrementHideRuleStatsFromArticle(art) {
+    if (art.dataset.xfsHideStatsRecorded === '1') return;
+    let items = [];
+    try { items = JSON.parse(art.dataset.xfsHideRuleStats || '[]'); } catch (_) {}
+    if (!Array.isArray(items) || items.length === 0) return;
+    const stats = loadHideRuleStats();
+    items.forEach(item => {
+      const type = item?.type;
+      const key = String(item?.key || '').trim();
+      if (!type || !key) return;
+      const id = `${type}\n${key}`;
+      const prev = stats[id] && typeof stats[id] === 'object' ? stats[id] : {};
+      stats[id] = { type, key, count: Math.max(0, Number(prev.count || 0)) + 1, updatedAt: Date.now() };
+    });
+    GM_setValue(HIDE_RULE_STATS_KEY, stats);
+    art.dataset.xfsHideStatsRecorded = '1';
+  }
+
   // ── Page scanner ─────────────────────────────────────────────────────
   function scanPage() {
     reloadKws();
@@ -1577,6 +1629,7 @@
       const fullText = [tweetText, cardText, bodyLinkText].filter(Boolean).join(' ');
 
       const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
+      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
       if (!matched) return;
 
       // First 10 words of tweet body — shown in panel for name/heart matches
@@ -1758,6 +1811,99 @@
     liker:    { label: '列表用户',           color: C.mute },
     referral: { label: '导流号',             color: C.referral },
   };
+
+  function showHideRuleStatsPanel() {
+    document.getElementById('xfs-rule-stats-panel')?.remove();
+    const stats = Object.values(loadHideRuleStats())
+      .filter(item => item && item.key && Number(item.count) > 0)
+      .sort((a, b) => Number(b.count || 0) - Number(a.count || 0));
+    const total = stats.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const max = Math.max(1, ...stats.map(item => Number(item.count || 0)));
+
+    const panel = document.createElement('div');
+    panel.id = 'xfs-rule-stats-panel';
+    panel.style.cssText = [
+      'position:fixed', 'left:50%', 'top:50%', 'transform:translate(-50%,-50%)',
+      'width:min(760px, calc(100vw - 32px))',
+      'max-height:min(78vh, 720px)', 'overflow:hidden',
+      'background:rgba(255,255,255,0.98)', `color:${C.text}`,
+      `border:1px solid ${C.border}`, 'border-radius:10px',
+      'box-shadow:0 18px 50px rgba(0,0,0,0.25)',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      'z-index:2147483647',
+      'display:flex', 'flex-direction:column',
+    ].join(';');
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid ${C.border};`;
+    const title = document.createElement('div');
+    title.textContent = `隐藏命中统计 · ${formatBlockedCount(total)}`;
+    title.style.cssText = 'flex:1;font-size:13px;font-weight:800;';
+    const note = document.createElement('div');
+    note.textContent = '本地统计，重复打开同一帖子会重复计数';
+    note.style.cssText = `font-size:10px;color:${C.sub};`;
+    const reset = document.createElement('button');
+    reset.textContent = '清零';
+    reset.style.cssText = `border:1px solid ${C.btnBorder};background:#fff;color:${C.sub};border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer;`;
+    reset.onclick = () => {
+      if (!window.confirm('清空隐藏命中统计？')) return;
+      GM_setValue(HIDE_RULE_STATS_KEY, {});
+      panel.remove();
+      showToast('隐藏命中统计已清空', false);
+    };
+    const close = document.createElement('button');
+    close.textContent = '×';
+    close.style.cssText = `border:none;background:transparent;color:${C.sub};font-size:18px;line-height:1;cursor:pointer;padding:0 4px;`;
+    close.onclick = () => panel.remove();
+    hdr.appendChild(title);
+    hdr.appendChild(note);
+    hdr.appendChild(reset);
+    hdr.appendChild(close);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;';
+    if (stats.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = '还没有统计数据。开启隐藏后，命中的内容规则会在这里累计。';
+      empty.style.cssText = `padding:28px;text-align:center;color:${C.sub};font-size:12px;`;
+      body.appendChild(empty);
+    } else {
+      stats.forEach(item => {
+        const type = item.type || 'content';
+        const color = type === 'name' ? C.nameKw : (type === 'regex' ? C.regexKw : C.suspect);
+        const count = Number(item.count || 0);
+        const row = document.createElement('div');
+        row.style.cssText = `display:grid;grid-template-columns:86px minmax(0,1fr) 64px;gap:8px;align-items:center;font-size:11px;`;
+        const typeEl = document.createElement('div');
+        typeEl.textContent = HIDE_RULE_TYPE_LABELS[type] || type;
+        typeEl.style.cssText = `color:${color};font-weight:700;white-space:nowrap;`;
+        const mid = document.createElement('div');
+        mid.style.cssText = 'min-width:0;';
+        const key = document.createElement('div');
+        key.textContent = item.key;
+        key.title = item.key;
+        key.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px;';
+        const barWrap = document.createElement('div');
+        barWrap.style.cssText = `height:7px;background:${C.border};border-radius:999px;overflow:hidden;`;
+        const bar = document.createElement('div');
+        bar.style.cssText = `height:100%;width:${Math.max(3, Math.round(count / max * 100))}%;background:${color};border-radius:999px;`;
+        barWrap.appendChild(bar);
+        mid.appendChild(key);
+        mid.appendChild(barWrap);
+        const countEl = document.createElement('div');
+        countEl.textContent = formatBlockedCount(count);
+        countEl.style.cssText = `text-align:right;color:${C.text};font-weight:800;font-variant-numeric:tabular-nums;`;
+        row.appendChild(typeEl);
+        row.appendChild(mid);
+        row.appendChild(countEl);
+        body.appendChild(row);
+      });
+    }
+
+    panel.appendChild(hdr);
+    panel.appendChild(body);
+    document.body.appendChild(panel);
+  }
 
   function showPanel(allUsers, opts = {}) {
     document.getElementById('xfs-panel')?.remove();
@@ -2030,6 +2176,12 @@
         addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
         addReBtn.onclick = addRe;
         reRow.appendChild(addReBtn);
+        const statsBtn = document.createElement('button');
+        statsBtn.textContent = '统计';
+        statsBtn.title = '查看每条内容规则累计隐藏了多少次回复';
+        statsBtn.style.cssText = `margin-left:auto;border:1px solid ${C.btnBorder};background:#fff;color:${C.sub};border-radius:8px;padding:3px 7px;font-size:10px;cursor:pointer;`;
+        statsBtn.onclick = showHideRuleStatsPanel;
+        reRow.appendChild(statsBtn);
         reSection.appendChild(reRow);
       }
       kwBar.appendChild(reSection);
@@ -2756,6 +2908,7 @@
     const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
     const shouldHide = shouldHideMatched || shouldHideReferral;
     if (shouldHide && art.dataset.xfsHidden !== '1') {
+      if (shouldHideMatched) incrementHideRuleStatsFromArticle(art);
       art.dataset.xfsHidden = '1';
       art.style.setProperty('max-height',    '2px',    'important');
       art.style.setProperty('min-height',    '0',      'important');
@@ -2793,6 +2946,7 @@
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
       const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
+      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
       const alreadyBlocked = blockedHandles.has(key);
       art.dataset.xfsHideMatched = (matched && !alreadyBlocked) ? '1' : '0';
       const btn = art.querySelector(`button[data-xfs-handle]`);
@@ -3026,6 +3180,7 @@
     const n = matchedHandlesInView.size;
     badge.textContent = n > 99 ? '99+' : String(n);
     badge.style.display = n > 0 ? 'flex' : 'none';
+    if (n > 0) resetContentCleanupButtonsIfComplete();
   }
 
   function updateReferralBadge() {
@@ -3135,6 +3290,7 @@
     ids.forEach(id => {
       const b = document.getElementById(id);
       if (!b) return;
+      b.dataset.xfsCleanupComplete = '1';
       b.disabled = false;
       b.style.opacity = '';
       b.style.pointerEvents = '';
@@ -3144,6 +3300,34 @@
       b.style.color = C.mute;
       b.style.background = `${C.mute}18`;
       b.onclick = () => location.reload();
+    });
+  }
+
+  function resetCompleteButton(id, icon, title, color, onclick) {
+    const b = document.getElementById(id);
+    if (!b || b.dataset.xfsCleanupComplete !== '1') return;
+    b.dataset.xfsCleanupComplete = '0';
+    b.disabled = false;
+    b.style.opacity = '';
+    b.style.pointerEvents = '';
+    b.textContent = icon;
+    b.title = title;
+    b.style.border = `2px solid ${color}`;
+    b.style.color = color;
+    b.style.background = 'rgba(255,255,255,0.92)';
+    b.onclick = onclick;
+  }
+
+  function resetContentCleanupButtonsIfComplete() {
+    resetCompleteButton('xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动屏蔽', C.blockRed, autoLoadAndScan);
+    resetCompleteButton('xfs-sweep-btn', SWEEP_SVG, '整页回复内容垃圾号一网打尽', C.nameKw, () => {
+      if (sweepHasRun) {
+        sessionStorage.setItem('xfs-auto-sweep', location.pathname);
+        location.reload();
+      } else {
+        sweepHasRun = true;
+        sweepAll();
+      }
     });
   }
 
@@ -3459,6 +3643,7 @@
         ? matchesFilters(displayName, fullText)
         : { matched: false, cats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [] };
       const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchInfo;
+      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
       const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
       const isOP = art === firstArt;
       art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
