@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.60
+// @version      5.61
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -3557,16 +3557,14 @@
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
     editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
-    editBtn.style.gridColumn = '1 / -1';
     const statsBtn = mkToolBtn('关键词命中统计', showHideRuleStatsPanel);
     statsBtn.style.borderColor = C.suspect;
     statsBtn.style.color = C.suspect;
-    statsBtn.style.gridColumn = '1 / -1';
     statsBtn.title = '查看每条关键词和正则累计命中并隐藏了多少次回复';
     remoteWrap.style.gridRow = 'span 4';
     youngWrap.style.gridRow = 'span 4';
-    grid.appendChild(editBtn);
-    grid.appendChild(statsBtn);
+    p.appendChild(editBtn);
+    p.appendChild(statsBtn);
     grid.appendChild(autoReferralBtn);
     grid.appendChild(remoteWrap);
     grid.appendChild(youngWrap);
