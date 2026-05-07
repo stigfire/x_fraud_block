@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.62
+// @version      5.63
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -3114,25 +3114,29 @@
       }
 
       let cachedReferralCount = handles.filter(handle => referralReason(handle)).length;
-      const unknownHandles = handles.filter(handle => cachedReferralAccount(handle) === null);
-      if (unknownHandles.length === 0) {
+      const lookupHandles = handles.filter(handle => {
+        const cached = cachedReferralAccount(handle);
+        return cached === null || cached.isReferral === false;
+      });
+      if (lookupHandles.length === 0) {
         progress.update(cachedReferralCount > 0
           ? `已识别 ${cachedReferralCount} 个导流号，无需重复查询`
           : '当前视图没有未检查账号，未发现导流号');
       } else {
         progress.update(cachedReferralCount > 0
-          ? `已识别 ${cachedReferralCount} 个导流号，只补查 ${unknownHandles.length} 个未知账号`
-          : `正在搜索导流号 0/${unknownHandles.length}`);
+          ? `已识别 ${cachedReferralCount} 个导流号，补查 ${lookupHandles.length} 个未命中账号`
+          : `正在搜索导流号 0/${lookupHandles.length}`);
       }
 
       let lookupError = null;
-      for (let i = 0; i < unknownHandles.length; i++) {
-        const handle = unknownHandles[i];
+      for (let i = 0; i < lookupHandles.length; i++) {
+        const handle = lookupHandles[i];
+        const forceRefresh = cachedReferralAccount(handle)?.isReferral === false;
         progress.update(cachedReferralCount > 0
-          ? `已识别 ${cachedReferralCount} 个，补查 ${i + 1}/${unknownHandles.length}`
-          : `正在搜索导流号 ${i + 1}/${unknownHandles.length}`);
+          ? `已识别 ${cachedReferralCount} 个，补查 ${i + 1}/${lookupHandles.length}`
+          : `正在搜索导流号 ${i + 1}/${lookupHandles.length}`);
         try {
-          await fetchReferralAccount(handle);
+          await fetchReferralAccount(handle, { forceRefresh });
           cachedReferralCount = handles.filter(h => referralReason(h)).length;
         } catch (e) {
           lookupError = lookupError || e;
@@ -3167,7 +3171,7 @@
         }
         return;
       }
-      progress.update(unknownHandles.length > 0
+      progress.update(lookupHandles.length > 0
         ? `发现 ${users.length} 个导流号，正在自动屏蔽...`
         : `使用已识别的 ${users.length} 个导流号，正在自动屏蔽...`);
       progress.close(900);
