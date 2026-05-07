@@ -2011,6 +2011,11 @@
       addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
       addReBtn.onclick = addRe;
       reRow.appendChild(addReBtn);
+      const reTip = document.createElement('span');
+      reTip.textContent = '?';
+      reTip.title = '正则很有效，懂的话可以新增；不懂建议别删，删除会明显削弱匹配。';
+      reTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.regexKw};border-radius:50%;font-size:10px;font-weight:700;color:${C.regexKw};cursor:help;`;
+      reRow.appendChild(reTip);
       kwBar.appendChild(reRow);
     }
     renderKwBar();
