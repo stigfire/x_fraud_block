@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.53
+// @version      5.54
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -2857,73 +2857,95 @@
     let handedOffToBlocker = false;
     const progress = showProgressToast('导流号扫描已开始，正在读取当前回复...', C.referralHot);
     try {
-    const domReferralHandles = captureReferralAccountsFromProfileDom(document);
-    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
-    const handles = [];
-    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
-      if (art === firstArt) return;
-      const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
-      const key = normalizeHandle(handle);
-      if (key) rememberReferralIntentHint(key, extractDisplayNameFromArticle(art, key));
-      if (key && !blockedHandles.has(key) && !handles.includes(key)) handles.push(key);
-    });
-    domReferralHandles.forEach(handle => {
-      const key = normalizeHandle(handle);
-      if (key && !blockedHandles.has(key) && !handles.includes(key)) handles.push(key);
-    });
-    if (handles.length === 0) {
-      progress.update('当前视图没有可扫描的回复用户');
-      progress.close(1200);
-      return;
-    }
-    progress.update(`正在搜索导流号 0/${handles.length}`);
-    let lookupError = null;
-    for (let i = 0; i < handles.length; i++) {
-      const handle = handles[i];
-      progress.update(`正在搜索导流号 ${i + 1}/${handles.length}`);
-      try {
-        await fetchReferralAccount(handle, { forceRefresh: true });
-      } catch (e) {
-        lookupError = lookupError || e;
-        if (isReferralRateLimitError(e)) break;
-      }
-    }
-    captureReferralAccountsFromProfileDom(document);
-    applyReferralForVisible();
-    const users = handles
-      .map(handle => {
-        const item = cachedReferralAccount(handle);
-        return item && item.isReferral ? {
-          handle,
-          displayName: handle,
-          cats: new Set(['referral']),
-          heartHits: [],
-          nameKwHits: [],
-          kwHits: [{ kw: item.isYoungAccount && !item.isLinkReferral ? '新号' : '导流号', snippet: referralItemDescription(item) }],
-          reHits: [],
-          tweetSnippet: referralItemDescription(item),
-        } : null;
-      })
-      .filter(Boolean);
-    if (users.length === 0) {
-      if (lookupError) {
-        progress.update('导流号搜索受限，请稍后再试');
-        progress.close(1600);
-        warnReferralLookupFailure(lookupError);
-      } else {
-        progress.update('搜索完成，未发现导流号');
+      const domReferralHandles = captureReferralAccountsFromProfileDom(document);
+      const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+      const handles = [];
+      const displayNames = new Map();
+      const rememberHandle = (handle, displayName = '') => {
+        const key = normalizeHandle(handle);
+        if (!key || blockedHandles.has(key)) return;
+        if (displayName) displayNames.set(key, displayName);
+        if (!handles.includes(key)) handles.push(key);
+      };
+      document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+        if (art === firstArt) return;
+        const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
+        const key = normalizeHandle(handle);
+        const displayName = key ? extractDisplayNameFromArticle(art, key) : '';
+        if (key) rememberReferralIntentHint(key, displayName);
+        rememberHandle(key, displayName);
+      });
+      domReferralHandles.forEach(handle => rememberHandle(handle));
+      if (handles.length === 0) {
+        progress.update('当前视图没有可扫描的回复用户');
         progress.close(1200);
+        return;
       }
-      return;
-    }
-    progress.update(`发现 ${users.length} 个导流号，正在自动屏蔽...`);
-    progress.close(900);
-    handedOffToBlocker = true;
-    showPanel(users, {
-      autoBlock: true,
-      refreshButtonIds: ['xfs-referral-scan-btn'],
-      onBlockDone: () => endScanMode('referral'),
-    });
+
+      let cachedReferralCount = handles.filter(handle => referralReason(handle)).length;
+      const unknownHandles = handles.filter(handle => cachedReferralAccount(handle) === null);
+      if (unknownHandles.length === 0) {
+        progress.update(cachedReferralCount > 0
+          ? `已识别 ${cachedReferralCount} 个导流号，无需重复查询`
+          : '当前视图没有未检查账号，未发现导流号');
+      } else {
+        progress.update(cachedReferralCount > 0
+          ? `已识别 ${cachedReferralCount} 个导流号，只补查 ${unknownHandles.length} 个未知账号`
+          : `正在搜索导流号 0/${unknownHandles.length}`);
+      }
+
+      let lookupError = null;
+      for (let i = 0; i < unknownHandles.length; i++) {
+        const handle = unknownHandles[i];
+        progress.update(cachedReferralCount > 0
+          ? `已识别 ${cachedReferralCount} 个，补查 ${i + 1}/${unknownHandles.length}`
+          : `正在搜索导流号 ${i + 1}/${unknownHandles.length}`);
+        try {
+          await fetchReferralAccount(handle);
+          cachedReferralCount = handles.filter(h => referralReason(h)).length;
+        } catch (e) {
+          lookupError = lookupError || e;
+          if (isReferralRateLimitError(e)) break;
+        }
+      }
+      captureReferralAccountsFromProfileDom(document);
+      applyReferralForVisible();
+      const users = handles
+        .map(handle => {
+          const item = cachedReferralAccount(handle);
+          return item && item.isReferral ? {
+            handle,
+            displayName: displayNames.get(handle) || handle,
+            cats: new Set(['referral']),
+            heartHits: [],
+            nameKwHits: [],
+            kwHits: [{ kw: item.isYoungAccount && !item.isLinkReferral ? '新号' : '导流号', snippet: referralItemDescription(item) }],
+            reHits: [],
+            tweetSnippet: referralItemDescription(item),
+          } : null;
+        })
+        .filter(Boolean);
+      if (users.length === 0) {
+        if (lookupError) {
+          progress.update('导流号搜索受限，请稍后再试');
+          progress.close(1600);
+          warnReferralLookupFailure(lookupError);
+        } else {
+          progress.update('搜索完成，未发现导流号');
+          progress.close(1200);
+        }
+        return;
+      }
+      progress.update(unknownHandles.length > 0
+        ? `发现 ${users.length} 个导流号，正在自动屏蔽...`
+        : `使用已识别的 ${users.length} 个导流号，正在自动屏蔽...`);
+      progress.close(900);
+      handedOffToBlocker = true;
+      showPanel(users, {
+        autoBlock: true,
+        refreshButtonIds: ['xfs-referral-scan-btn'],
+        onBlockDone: () => endScanMode('referral'),
+      });
     } finally {
       if (!handedOffToBlocker) endScanMode('referral');
     }
@@ -3077,11 +3099,12 @@
 
   function showToolsPanel() {
     closeToolsPanel();
+    const panelBottom = toolbarBottomPx(166);
     const p = document.createElement('div');
     p.id = 'xfs-tools-panel';
     p.style.cssText = [
-      'position:fixed', `right:${toolbarRightPx(40)}`, `bottom:${toolbarBottomPx(166)}`,
-      'width:210px', 'padding:8px',
+      'position:fixed', `right:${toolbarRightPx(40)}`, `bottom:${panelBottom}`,
+      'width:min(430px, calc(100vw - 24px))', `max-height:calc(100vh - ${panelBottom} - 16px)`, 'overflow:auto', 'padding:8px',
       'background:rgba(255,255,255,0.96)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
       `border:1px solid ${C.btnBorder}`,
@@ -3097,6 +3120,14 @@
     title.textContent = '设置 / 工具';
     title.style.cssText = `font-size:12px;font-weight:700;color:${C.sub};padding:0 2px 2px;`;
     p.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = [
+      'display:grid',
+      'grid-template-columns:repeat(2, minmax(0, 1fr))',
+      'gap:6px',
+      'align-items:start',
+    ].join(';');
 
     function mkToolBtn(text, onclick) {
       const b = document.createElement('button');
@@ -3292,14 +3323,17 @@
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
     editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
-    p.appendChild(editBtn);
-    p.appendChild(remoteWrap);
-    p.appendChild(autoReferralBtn);
-    p.appendChild(youngWrap);
-    p.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
-    p.appendChild(mkToolBtn('导出自定义词', exportKws));
-    p.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
-    p.appendChild(mkToolBtn('覆盖自定义词', () => importKws('replace')));
+    remoteWrap.style.gridRow = 'span 4';
+    youngWrap.style.gridRow = 'span 4';
+    grid.appendChild(editBtn);
+    grid.appendChild(autoReferralBtn);
+    grid.appendChild(remoteWrap);
+    grid.appendChild(youngWrap);
+    grid.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
+    grid.appendChild(mkToolBtn('导出自定义词', exportKws));
+    grid.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
+    grid.appendChild(mkToolBtn('覆盖自定义词', () => importKws('replace')));
+    p.appendChild(grid);
     document.body.appendChild(p);
 
     setTimeout(() => {
