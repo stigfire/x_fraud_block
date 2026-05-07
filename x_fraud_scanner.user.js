@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.54
+// @version      5.55
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -56,7 +56,6 @@
     regexLen: 240,
   };
   let remoteRulesActive = !!GM_getValue('remote_rules_active', false);
-  let remoteRegexRulesActive = !!GM_getValue('remote_regex_rules_active', false);
   let remoteRulesCache = null;
   let remoteRulesFetching = false;
   let remoteRulesLastError = GM_getValue('remote_rules_last_error', '');
@@ -78,12 +77,20 @@
     }
     return out;
   }
+  function _regexPatternParts(raw) {
+    const value = String(raw).trim();
+    const m = value.match(/^(content|body|name):(.*)$/is);
+    if (!m) return { raw: value, scope: 'both', pat: value };
+    return { raw: value, scope: m[1].toLowerCase() === 'name' ? 'name' : 'body', pat: m[2].trim() };
+  }
   function _limitRemoteList(list, limit, maxLen, isRegex = false) {
     const out = [];
     for (const item of _cleanKwList(list)) {
       if (item.length > maxLen) continue;
       if (isRegex) {
-        try { new RegExp(item, 'mu'); } catch (_) { continue; }
+        const parsed = _regexPatternParts(item);
+        if (!parsed.pat) continue;
+        try { new RegExp(parsed.pat, 'mu'); } catch (_) { continue; }
       }
       out.push(item);
       if (out.length >= limit) break;
@@ -124,7 +131,7 @@
     if (!remoteRulesActive || !remoteRulesCache?.rules) return [];
     if (key === 'suspect_kws') return remoteRulesCache.rules.contentKeywords || [];
     if (key === 'suspect_name_kws') return remoteRulesCache.rules.nameKeywords || [];
-    if (key === 'suspect_re_kws') return remoteRegexRulesActive ? (remoteRulesCache.rules.regexKeywords || []) : [];
+    if (key === 'suspect_re_kws') return remoteRulesCache.rules.regexKeywords || [];
     return [];
   }
   function _combinedDefaults(defaults, key) {
@@ -174,7 +181,8 @@
     if (key === regexCacheKey) return regexCache;
     regexCacheKey = key;
     regexCache = patterns.map(pat => {
-      try { return { pat, re: new RegExp(pat, 'mu') }; }
+      const parsed = _regexPatternParts(pat);
+      try { return { pat, scope: parsed.scope, re: new RegExp(parsed.pat, 'mu') }; }
       catch (_) { return null; }
     }).filter(Boolean);
     return regexCache;
@@ -1482,9 +1490,10 @@
 
   // Compile and run a regex pattern string against text.
   // Flags: m (^ matches line start), u (Unicode). Returns hit objects like getContextSnippets.
-  function getRegexHits(text, patterns) {
+  function getRegexHits(text, patterns, target = 'both') {
     const hits = [];
-    for (const { pat, re } of compiledRegexes(patterns)) {
+    for (const { pat, scope, re } of compiledRegexes(patterns)) {
+      if (scope !== 'both' && target !== 'both' && scope !== target) continue;
       const m = re.exec(text);
       if (!m) continue;
       const idx = m.index;
@@ -1503,8 +1512,8 @@
     const heartHits  = [...new Set(displayName.match(HEART_RE) || [])];
     const nameKwHits = SUSPECT_NAME_KWS.filter(kw => stripInvisible(displayName).toLowerCase().includes(kw.toLowerCase()));
     const kwHits     = getContextSnippets(fullText, SUSPECT_KWS, CTX_LEN);
-    const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS).map(h => ({ ...h, snippet: `昵称: ${h.snippet}` }));
-    const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS);
+    const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS, 'name').map(h => ({ ...h, snippet: `昵称: ${h.snippet}` }));
+    const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS, 'body');
     const reHits     = [...nameReHits, ...bodyReHits];
     const cats = new Set();
     if (heartHits.length  > 0) cats.add('heart');
@@ -1976,12 +1985,13 @@
       });
       const reInp = document.createElement('input');
       reInp.placeholder = '+ 正则';
-      reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入';
+      reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 content: 或 name: 限定匹配范围';
       reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
       const addRe = () => {
         const v = reInp.value.trim();
         if (!v) return;
-        try { new RegExp(v, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
+        const parsed = _regexPatternParts(v);
+        try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
         reInp.style.borderColor = C.regexKw;
         if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); refreshKwPanel(); }
         else reInp.value = '';
@@ -1990,7 +2000,8 @@
       reInp.oninput   = () => {
         const v = reInp.value.trim();
         if (!v) { reInp.style.borderColor = C.regexKw; return; }
-        try { new RegExp(v, 'mu'); reInp.style.borderColor = C.regexKw; }
+        const parsed = _regexPatternParts(v);
+        try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); reInp.style.borderColor = C.regexKw; }
         catch (_) { reInp.style.borderColor = C.blockRed; }
       };
       reRow.appendChild(reInp);
@@ -3170,10 +3181,6 @@
       remoteRulesBtn.style.borderColor = remoteRulesActive ? C.nameKw : C.btnBorder;
       remoteRulesBtn.style.color = remoteRulesActive ? C.nameKw : C.sub;
       remoteRulesBtn.style.background = remoteRulesActive ? '#f2fbfc' : '#fff';
-      remoteRegexBtn.textContent = `远程正则规则：${remoteRegexRulesActive ? '开' : '关'}`;
-      remoteRegexBtn.style.borderColor = remoteRegexRulesActive ? C.regexKw : C.btnBorder;
-      remoteRegexBtn.style.color = remoteRegexRulesActive ? C.regexKw : C.sub;
-      remoteRegexBtn.style.background = remoteRegexRulesActive ? '#f2fbfc' : '#fff';
       remoteUpdateBtn.textContent = remoteRulesFetching ? '正在更新...' : '立即更新远程规则';
       remoteUpdateBtn.disabled = !remoteRulesActive || remoteRulesFetching;
       remoteUpdateBtn.style.opacity = remoteUpdateBtn.disabled ? '0.55' : '1';
@@ -3190,7 +3197,7 @@
     remoteTitle.textContent = '远程规则订阅';
     remoteTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.nameKw};`;
     const remoteNote = document.createElement('div');
-    remoteNote.textContent = '默认关闭。远程规则来自 GitHub，只做单向拉取；失败时沿用本地缓存。正则规则另设开关。';
+    remoteNote.textContent = '默认关闭。开启后同步内容、用户名和正则三类远程规则；失败时沿用本地缓存。远程正则可能误伤，开启前要谨慎。';
     remoteNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const remoteStatus = document.createElement('div');
     remoteStatus.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};word-break:break-word;`;
@@ -3206,14 +3213,6 @@
         refreshRemoteRulesControls();
       }
     });
-    const remoteRegexBtn = mkToolBtn('', () => {
-      remoteRegexRulesActive = !remoteRegexRulesActive;
-      GM_setValue('remote_regex_rules_active', remoteRegexRulesActive);
-      reloadKws();
-      refreshKeywordPanelIfOpen();
-      refreshRemoteRulesControls();
-      showToast(remoteRegexRulesActive ? '远程正则规则已开启' : '远程正则规则已关闭', false);
-    });
     const remoteUpdateBtn = mkToolBtn('', () => {
       refreshRemoteRulesControls();
       refreshRemoteRules({ force: true, silent: false }).then(refreshRemoteRulesControls);
@@ -3221,7 +3220,6 @@
     remoteUpdateBtn.title = '手动从 GitHub 拉取最新远程规则';
     remoteWrap.appendChild(remoteTitle);
     remoteWrap.appendChild(remoteRulesBtn);
-    remoteWrap.appendChild(remoteRegexBtn);
     remoteWrap.appendChild(remoteUpdateBtn);
     remoteWrap.appendChild(remoteStatus);
     remoteWrap.appendChild(remoteNote);

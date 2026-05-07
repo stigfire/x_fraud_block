@@ -1,10 +1,12 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-07.2",
+  "rulesVersion": "2026-05-07.3",
   "updatedAt": "2026-05-07T00:00:00Z",
   "contentKeywords": [],
   "nameKeywords": [
     "电报"
   ],
-  "regexKeywords": []
+  "regexKeywords": [
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,200}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){4,})[\\s\\S]+"
+  ]
 }
