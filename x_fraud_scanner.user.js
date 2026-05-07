@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.59
+// @version      5.60
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -1837,7 +1837,7 @@
     const hdr = document.createElement('div');
     hdr.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid ${C.border};`;
     const title = document.createElement('div');
-    title.textContent = `隐藏命中统计 · ${formatBlockedCount(total)}`;
+    title.textContent = `关键词命中统计 · ${formatBlockedCount(total)}`;
     title.style.cssText = 'flex:1;font-size:13px;font-weight:800;';
     const note = document.createElement('div');
     note.textContent = '本地统计，重复打开同一帖子会重复计数';
@@ -1846,10 +1846,10 @@
     reset.textContent = '清零';
     reset.style.cssText = `border:1px solid ${C.btnBorder};background:#fff;color:${C.sub};border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer;`;
     reset.onclick = () => {
-      if (!window.confirm('清空隐藏命中统计？')) return;
+      if (!window.confirm('清空关键词命中统计？')) return;
       GM_setValue(HIDE_RULE_STATS_KEY, {});
       panel.remove();
-      showToast('隐藏命中统计已清空', false);
+      showToast('关键词命中统计已清空', false);
     };
     const close = document.createElement('button');
     close.textContent = '×';
@@ -1864,7 +1864,7 @@
     body.style.cssText = 'overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;';
     if (stats.length === 0) {
       const empty = document.createElement('div');
-      empty.textContent = '还没有统计数据。开启隐藏后，命中的内容规则会在这里累计。';
+      empty.textContent = '还没有统计数据。开启隐藏后，命中的关键词和正则会在这里累计。';
       empty.style.cssText = `padding:28px;text-align:center;color:${C.sub};font-size:12px;`;
       body.appendChild(empty);
     } else {
@@ -3557,10 +3557,12 @@
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
     editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
-    const statsBtn = mkToolBtn('隐藏命中统计', showHideRuleStatsPanel);
+    editBtn.style.gridColumn = '1 / -1';
+    const statsBtn = mkToolBtn('关键词命中统计', showHideRuleStatsPanel);
     statsBtn.style.borderColor = C.suspect;
     statsBtn.style.color = C.suspect;
-    statsBtn.title = '查看每条内容规则累计隐藏了多少次回复';
+    statsBtn.style.gridColumn = '1 / -1';
+    statsBtn.title = '查看每条关键词和正则累计命中并隐藏了多少次回复';
     remoteWrap.style.gridRow = 'span 4';
     youngWrap.style.gridRow = 'span 4';
     grid.appendChild(editBtn);
