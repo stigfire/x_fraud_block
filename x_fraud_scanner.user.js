@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.63
+// @version      5.64
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -53,12 +53,13 @@
     name: 300,
     regex: 80,
     keywordLen: 120,
-    regexLen: 240,
+    regexLen: 500,
   };
   let remoteRulesActive = !!GM_getValue('remote_rules_active', false);
   let remoteRulesCache = null;
   let remoteRulesFetching = false;
   let remoteRulesLastError = GM_getValue('remote_rules_last_error', '');
+  let remoteRulesLastChange = GM_getValue('remote_rules_last_change', '');
   // Keyword storage: only user additions/deletions are persisted.
   // Defaults are always merged in at startup, so new script-level presets
   // appear automatically even when the user has existing stored data.
@@ -294,6 +295,61 @@
     return `内容 ${c} / 用户名 ${n} / 正则 ${r}${ver}`;
   }
 
+  function remoteRulesTotal(cache) {
+    const rules = cache?.rules;
+    if (!rules) return 0;
+    return rules.contentKeywords.length + rules.nameKeywords.length + rules.regexKeywords.length;
+  }
+
+  function diffRemoteRuleList(prevList, nextList) {
+    const prev = Array.isArray(prevList) ? prevList : [];
+    const next = Array.isArray(nextList) ? nextList : [];
+    let start = 0;
+    while (start < prev.length && start < next.length && prev[start] === next[start]) start++;
+    let prevEnd = prev.length - 1;
+    let nextEnd = next.length - 1;
+    while (prevEnd >= start && nextEnd >= start && prev[prevEnd] === next[nextEnd]) {
+      prevEnd--;
+      nextEnd--;
+    }
+    const prevMid = Math.max(0, prevEnd - start + 1);
+    const nextMid = Math.max(0, nextEnd - start + 1);
+    return {
+      added: Math.max(0, nextMid - prevMid),
+      changed: Math.min(prevMid, nextMid),
+      removed: Math.max(0, prevMid - nextMid),
+    };
+  }
+
+  function remoteRulesChange(prevCache, nextCache) {
+    if (!prevCache?.rules) {
+      return { firstFetch: true, added: remoteRulesTotal(nextCache), changed: 0, removed: 0 };
+    }
+    const out = { firstFetch: false, added: 0, changed: 0, removed: 0 };
+    [
+      ['contentKeywords'],
+      ['nameKeywords'],
+      ['regexKeywords'],
+    ].forEach(([key]) => {
+      const diff = diffRemoteRuleList(prevCache.rules[key], nextCache.rules[key]);
+      out.added += diff.added;
+      out.changed += diff.changed;
+      out.removed += diff.removed;
+    });
+    return out;
+  }
+
+  function remoteRulesChangeText(change) {
+    if (change.firstFetch) return `首次拉取 ${change.added} 条`;
+    const total = change.added + change.changed + change.removed;
+    if (!total) return '本次无变化';
+    const parts = [];
+    if (change.added) parts.push(`新增 ${change.added}`);
+    if (change.changed) parts.push(`修改 ${change.changed}`);
+    if (change.removed) parts.push(`删除 ${change.removed}`);
+    return `本次变化 ${total} 条（${parts.join(' / ')}）`;
+  }
+
   function remoteRulesFetchedText() {
     const ts = Number(remoteRulesCache?.fetchedAt || 0);
     if (!ts) return '从未更新';
@@ -346,15 +402,18 @@
     remoteRulesFetching = true;
     try {
       const payload = await requestRemoteRulesPayload();
+      const prevCache = remoteRulesCache;
       const nextCache = sanitizeRemoteRulesPayload(payload, Date.now());
+      remoteRulesLastChange = remoteRulesChangeText(remoteRulesChange(prevCache, nextCache));
       remoteRulesCache = nextCache;
       remoteRulesLastError = '';
       GM_setValue('remote_rules_cache', remoteRulesCache);
       GM_setValue('remote_rules_last_error', '');
+      GM_setValue('remote_rules_last_change', remoteRulesLastChange);
       reloadKws();
       refreshKeywordPanelIfOpen();
       reapplyContentRulesForVisible();
-      if (!silent) showToast(`远程规则已更新：${remoteRulesSummary()}`, false);
+      if (!silent) showToast(`远程规则已更新：${remoteRulesLastChange}；当前 ${remoteRulesSummary()}`, false);
       return true;
     } catch (e) {
       remoteRulesLastError = e?.message || String(e);
@@ -3440,7 +3499,7 @@
       remoteUpdateBtn.style.opacity = remoteUpdateBtn.disabled ? '0.55' : '1';
       remoteUpdateBtn.style.cursor = remoteUpdateBtn.disabled ? 'default' : 'pointer';
       remoteStatus.textContent = remoteRulesActive
-        ? `${remoteRulesSummary()} · ${remoteRulesFetchedText()}`
+        ? `${remoteRulesSummary()} · ${remoteRulesFetchedText()}${remoteRulesLastChange ? ` · ${remoteRulesLastChange}` : ''}`
         : '默认关闭；开启后每小时从 GitHub 拉取一次。';
       remoteStatus.title = remoteRulesLastError ? `上次失败：${remoteRulesLastError}` : remoteStatus.textContent;
     }
