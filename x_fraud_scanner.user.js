@@ -353,6 +353,7 @@
       GM_setValue('remote_rules_last_error', '');
       reloadKws();
       refreshKeywordPanelIfOpen();
+      reapplyContentRulesForVisible();
       if (!silent) showToast(`远程规则已更新：${remoteRulesSummary()}`, false);
       return true;
     } catch (e) {
@@ -2752,6 +2753,42 @@
 
   function applyHideAll() {
     document.querySelectorAll('article[data-testid="tweet"]').forEach(applyHideToArticle);
+  }
+
+  function reapplyContentRulesForVisible() {
+    if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
+    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (art === firstArt) return;
+      const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
+      const key = normalizeHandle(handle);
+      if (!key) return;
+      const displayName = extractDisplayNameFromArticle(art, key) || key;
+      const textEl = art.querySelector('[data-testid="tweetText"]');
+      const cardEl = art.querySelector('[data-testid="card.wrapper"]');
+      const bodyLinkText = [
+        ...(textEl ? [...textEl.querySelectorAll('a[href]')] : []),
+        ...(cardEl ? [...cardEl.querySelectorAll('a[href]')] : []),
+      ].map(a => a.textContent).join(' ');
+      const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
+      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
+      const alreadyBlocked = blockedHandles.has(key);
+      art.dataset.xfsHideMatched = (matched && !alreadyBlocked) ? '1' : '0';
+      const btn = art.querySelector(`button[data-xfs-handle]`);
+      if (btn) {
+        btn.dataset.xfsMatched = (matched && !alreadyBlocked) ? '1' : '0';
+        updateInlineBlockButton(btn);
+      }
+      if (matched && !alreadyBlocked) {
+        matchedHandlesInView.add(key);
+        matchedUsersCache.set(key, { handle: key, displayName, cats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], tweetSnippet: '' });
+      } else {
+        matchedHandlesInView.delete(key);
+        matchedUsersCache.delete(key);
+      }
+    });
+    updateHideBadge();
+    applyHideAll();
   }
 
   /*
