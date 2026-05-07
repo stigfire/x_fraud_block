@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         X Fraud Scanner (垃圾推号一扫空)
+// @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      4.96
-// @description  扫描推文回复中的欺诈用户（心形 Emoji / 夸克/UC链接 / 可疑关键词），一键批量屏蔽
+// @version      5.48
+// @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzEiIGZpbGw9IiNmNDIxMmUiLz48Y2lyY2xlIGN4PSIyNyIgY3k9IjI3IiByPSIxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIvPjxsaW5lIHgxPSIzNSIgeTE9IjM1IiB4Mj0iNDgiIHkyPSI0OCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjIxIiB5MT0iMjciIHgyPSIzMyIgeTI9IjI3IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48bGluZSB4MT0iMjciIHkxPSIyMSIgeDI9IjI3IiB5Mj0iMzMiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==
@@ -23,16 +23,26 @@
   const HEART_RE   = /[\u2764\u2665\u2763\u{1F493}\u{1F494}\u{1F495}\u{1F496}\u{1F497}\u{1F498}\u{1F499}\u{1F49A}\u{1F49B}\u{1F49C}\u{1F49D}\u{1F49E}\u{1F49F}\u{1F5A4}\u{1F90D}\u{1F90E}\u{1F9E1}]/u;
   // Basic CJK block — used to distinguish Chinese-context tweets from English ones
   const CHINESE_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+  const FACE_EMOJI_SRC = '[\\u{1F600}-\\u{1F64F}]|[\\u{1F910}-\\u{1F917}]|[\\u{1F920}-\\u{1F92F}]|[\\u{1F970}-\\u{1F97A}]|\\u{1F9D0}|[\\u{1FAE0}-\\u{1FAE8}]|[\\u263A\\u2639]';
+  const NON_FACE_EMOJI_SRC = `(?!(?:${FACE_EMOJI_SRC}))\\p{Extended_Pictographic}[\\uFE0F\\u{1F3FB}-\\u{1F3FF}]?`;
+  // Strange characters for decorative spam: Unicode symbols only. Punctuation, including CJK/fullwidth punctuation, is intentionally excluded.
+  const DECOR_SYMBOL_SRC = `(?!(?:${NON_FACE_EMOJI_SRC}))\\p{S}`;
+  const DECOR_SYMBOL_RUN_SRC = `(?:${DECOR_SYMBOL_SRC})+`;
   const DEFAULT_SUSPECT_KWS      = ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big bro', 'big brother', 'little bro', '单男', '第一骚', '小m', '男大弟弟', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场', '同城的哥哥', '⬆️', '🍓'];
   // Text keywords matched against display name (dynamic, can add/remove in panel)
-  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费', '无偿', '搭子'];
-  // RegEx patterns matched against tweet body (stored as strings, compiled at match time)
+  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费', '无偿', '搭子', '反差', '护士', '高中生', '🌸🌸'];
+  // RegEx patterns matched against display name and tweet body (stored as strings, compiled at match time)
   // Preset: @handle followed by blank lines then an upward arrow — classic spam referral pattern
   const DEFAULT_SUSPECT_RE_KWS   = [
     '^@\\w+\\n+[⬆↑⇑]',
     '👉\\s*@\\w',
     '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
+    '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
+    '(?=[\\s\\S]*不行了)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
     '(?=[\\s\\S]*主页)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
+    `(?:${NON_FACE_EMOJI_SRC}\\s*){3,}`,
+    `(?:${DECOR_SYMBOL_RUN_SRC}\\s*(?:${NON_FACE_EMOJI_SRC}\\s*){2,}|(?:${NON_FACE_EMOJI_SRC}\\s*){2,}${DECOR_SYMBOL_RUN_SRC})`,
+    '[\\u02B0-\\u02FF\\u1D2C-\\u1D7F\\u1D80-\\u1DBF\\u2070-\\u209F]{3,}',
   ];
   // Keyword storage: only user additions/deletions are persisted.
   // Defaults are always merged in at startup, so new script-level presets
@@ -83,6 +93,18 @@
     _saveKwSet(SUSPECT_KWS,      DEFAULT_SUSPECT_KWS,      'suspect_kws');
     _saveKwSet(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     _saveKwSet(SUSPECT_RE_KWS,   DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+  }
+  let regexCacheKey = '';
+  let regexCache = [];
+  function compiledRegexes(patterns) {
+    const key = patterns.join('\n');
+    if (key === regexCacheKey) return regexCache;
+    regexCacheKey = key;
+    regexCache = patterns.map(pat => {
+      try { return { pat, re: new RegExp(pat, 'mu') }; }
+      catch (_) { return null; }
+    }).filter(Boolean);
+    return regexCache;
   }
   function _kwAdditions(live, defaults) {
     const defNorms = new Set(defaults.map(_normKw));
@@ -191,12 +213,18 @@
   // false positives than profile-link based referral detection, but the old
   // threshold constant is kept here as a note for possible future scoring.
   // const DEFAULT_LOW_FOLLOWER_THRESHOLD = 5;
-  const REFERRAL_CACHE_KEY = 'xfs-referral-account-cache-v2';
+  const REFERRAL_CACHE_KEY = 'xfs-referral-account-cache-v10';
   const REFERRAL_CACHE_TTL = 48 * 60 * 60 * 1000;
-  const REFERRAL_MIN_GAP = 1500;
+  const REFERRAL_MIN_GAP = 2500;
+  const REFERRAL_JITTER = 2500;
+  const REFERRAL_RATE_LIMIT_COOLDOWN = 10 * 60 * 1000;
+  const REFERRAL_FAILURE_TTL = 30 * 60 * 1000;
   const REFERRAL_MAX_CACHE = 1200;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const YOUNG_ACCOUNT_DAY_OPTIONS = [7, 14, 30, 60, 90];
   const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
   const REFERRAL_X_LINK_GLOBAL_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/ig;
+  const REFERRAL_ANY_LINK_RE = /\b(?:(?:https?:\/\/|www\.)[^\s<>"'，。、《》【】（）()]+|(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:com\.cn|net\.cn|org\.cn|com|net|org|io|me|app|dev|xyz|cc|co|tv|link|site|top|shop|info|biz|vip|icu|cn|ly|to|be|gg|club|online|store|live|fun|quest|pw|ru|jp|us|uk|de|ai|one|pro|ink|wiki|work|world|today|space|click|cloud|mobi|red|kim|wang|xin)(?::\d{2,5})?(?:\/[^\s<>"'，。、《》【】（）()]*)?)(?![A-Za-z0-9.-])/ig;
   const DEFAULT_USER_LOOKUP_QUERY_ID = 'IGgvgiOx4QZndDHuD3x9TQ';
   const USER_LOOKUP_QUERY_ID_FALLBACKS = [
     DEFAULT_USER_LOOKUP_QUERY_ID,
@@ -207,11 +235,22 @@
   let sweepHasRun = false;          // true after first sweep on current URL
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
-  let sweepInProgress = false;             // true during sweep/scan scroll ops — suppresses hide application
+  let autoReferralDetectActive = GM_getValue('auto_referral_detect', true); // low-rate background referral lookup for visible replies
+  let youngAccountFilterActive = GM_getValue('young_account_filter_active', false); // optional profile-created-at filter; default off due to lookup cost and false positives
+  let youngAccountCutoffMode = normalizeYoungAccountCutoffMode(GM_getValue('young_account_cutoff_mode', 'days'));
+  let youngAccountMaxAgeDays = normalizeYoungAccountDays(GM_getValue('young_account_max_age_days', 30));
+  let youngAccountCutoffDate = normalizeDateInputValue(GM_getValue('young_account_cutoff_date', defaultYoungAccountCutoffDate()));
+  let panelDockedActive = GM_getValue('panel_docked', false); // remember whether the result panel should open docked
+  let buttonsCollapsed = GM_getValue('buttons_collapsed', false); // collapse the right-side floating tool stack
+  let toolbarRight = GM_getValue('toolbar_right', 18);
+  let toolbarBaseBottom = GM_getValue('toolbar_base_bottom', 160);
+  let activeScanMode = '';
   let userLookupQueryId = GM_getValue('user_lookup_query_id', DEFAULT_USER_LOOKUP_QUERY_ID);
   let capturedApiHeaders = null;
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
   const matchedUsersCache = new Map();   // handle → full user object; survives DOM unload by React virtual list
+  const referralIntentHints = new Map(); // handle -> visible profile/display-name text containing referral intent
+  const referralHintRefreshDone = new Set();
   const BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 
   function maybeCaptureUserLookupQueryId(url) {
@@ -333,6 +372,35 @@
     setTimeout(() => { t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 420); }, 2200);
   }
 
+  function showProgressToast(msg, color = C.mute) {
+    const old = document.getElementById('xfs-progress-toast');
+    old?.remove();
+    const t = document.createElement('div');
+    t.id = 'xfs-progress-toast';
+    t.textContent = msg;
+    t.style.cssText = [
+      'position:fixed', 'bottom:148px', 'right:16px',
+      `background:${color}`, 'color:#fff',
+      'padding:6px 12px', 'border-radius:13px',
+      'font-size:12px', 'font-weight:700',
+      'z-index:2147483647', 'pointer-events:none',
+      'box-shadow:0 3px 12px rgba(0,0,0,0.22)',
+      'max-width:260px', 'white-space:nowrap',
+    ].join(';');
+    document.body.appendChild(t);
+    return {
+      update(next) { t.textContent = next; },
+      close(delay = 0) {
+        setTimeout(() => {
+          t.style.transition = 'opacity 0.35s, transform 0.35s';
+          t.style.opacity = '0';
+          t.style.transform = 'translateY(4px)';
+          setTimeout(() => t.remove(), 380);
+        }, delay);
+      },
+    };
+  }
+
   // ── Mute selected word: copy to clipboard + open settings page ───────
   // X.com's internal muted-keywords API (/i/api/1.1/mutes/keywords/create.json)
   // returns 404 — endpoint removed. Reliable fallback: clipboard + navigation.
@@ -407,6 +475,19 @@
     return null;
   }
 
+  function extractDisplayNameFromArticle(art, handle = extractHandleFromArticle(art)) {
+    const nameEl = art.querySelector('[data-testid="User-Name"]');
+    if (!nameEl || !handle) return handle || '';
+    const rawNameText = getTextWithEmoji(nameEl);
+    const atIdx = rawNameText.indexOf('@' + handle);
+    if (atIdx > 0) return rawNameText.slice(0, atIdx).trim() || handle;
+    const nameLink = [...nameEl.querySelectorAll('a')].find(a => {
+      const t = getTextWithEmoji(a).trim();
+      return t && !t.startsWith('@');
+    });
+    return nameLink ? getTextWithEmoji(nameLink).trim() || handle : handle;
+  }
+
   function loadReferralCache() {
     const raw = GM_getValue(REFERRAL_CACHE_KEY, {});
     const now = Date.now();
@@ -417,7 +498,11 @@
       if (Number.isFinite(ts) && now - ts < REFERRAL_CACHE_TTL) {
         cache.set(handle, {
           isReferral: !!(item && item.isReferral),
+          isLinkReferral: !!(item && item.isLinkReferral),
+          isYoungAccount: !!(item && item.isYoungAccount),
           urls: Array.isArray(item && item.urls) ? item.urls : [],
+          createdAt: String((item && item.createdAt) || ''),
+          accountAgeDays: Number.isFinite(Number(item && item.accountAgeDays)) ? Number(item.accountAgeDays) : null,
           ts,
         });
       }
@@ -428,8 +513,9 @@
   const referralCache = loadReferralCache();
   const referralPending = new Map();
   const referralQueue = [];
+  const referralFailureCache = new Map();
   let referralQueueActive = false;
-  let referralLastRequest = 0;
+  let referralQueueTimer = null;
   let referralWarned = false;
 
   function saveReferralCache() {
@@ -445,12 +531,128 @@
 
   let referralSaveTimer = null;
 
+  function normalizeYoungAccountDays(value) {
+    const n = parseInt(value, 10);
+    return YOUNG_ACCOUNT_DAY_OPTIONS.includes(n) ? n : 30;
+  }
+
+  function normalizeYoungAccountCutoffMode(value) {
+    return value === 'date' ? 'date' : 'days';
+  }
+
+  function toDateInputValue(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  function defaultYoungAccountCutoffDate() {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return toDateInputValue(d);
+  }
+
+  function normalizeDateInputValue(value) {
+    const raw = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw) && Number.isFinite(Date.parse(`${raw}T00:00:00`))) return raw;
+    return defaultYoungAccountCutoffDate();
+  }
+
+  function youngAccountCutoffMs() {
+    if (youngAccountCutoffMode === 'date') {
+      return Date.parse(`${youngAccountCutoffDate}T00:00:00`);
+    }
+    return Date.now() - youngAccountMaxAgeDays * DAY_MS;
+  }
+
+  function isYoungAccountByAge(age) {
+    const cutoff = youngAccountCutoffMs();
+    return !!(youngAccountFilterActive && age && Number.isFinite(cutoff) && Date.parse(age.createdAtIso) >= cutoff);
+  }
+
+  function youngAccountRuleLabel() {
+    return youngAccountCutoffMode === 'date'
+      ? `注册日期晚于 ${youngAccountCutoffDate}`
+      : `注册少于 ${youngAccountMaxAgeDays} 天`;
+  }
+
+  function accountAgeInfo(createdAt) {
+    const raw = String(createdAt || '').trim();
+    if (!raw) return null;
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms)) return null;
+    const ageMs = Date.now() - ms;
+    const ageDays = Math.floor(ageMs / DAY_MS);
+    if (!Number.isFinite(ageDays) || ageDays < 0) return null;
+    return {
+      createdAt: raw,
+      createdAtIso: new Date(ms).toISOString(),
+      ageMs,
+      ageDays,
+    };
+  }
+
+  function createdAtFromProfile(legacy, userObj = null) {
+    return legacy?.created_at
+      || legacy?.createdAt
+      || userObj?.legacy?.created_at
+      || userObj?.legacy?.createdAt
+      || userObj?.created_at
+      || userObj?.createdAt
+      || '';
+  }
+
+  function materializeReferralItem(item) {
+    if (!item) return null;
+    const age = accountAgeInfo(item.createdAt);
+    const isYoungAccount = isYoungAccountByAge(age);
+    const isLinkReferral = item.isLinkReferral != null
+      ? !!item.isLinkReferral
+      : !!(Array.isArray(item.urls) && item.urls.length > 0 && !item.isYoungAccount);
+    return {
+      ...item,
+      isLinkReferral,
+      isYoungAccount,
+      accountAgeDays: age ? age.ageDays : item.accountAgeDays,
+      youngAccountMaxAgeDays,
+      youngAccountCutoffMode,
+      youngAccountCutoffDate,
+      isReferral: isLinkReferral || isYoungAccount,
+    };
+  }
+
+  function referralItemDescription(item) {
+    if (!item) return 'profile referral link';
+    if (item.isLinkReferral && item.urls?.length) return item.urls[0];
+    if (item.isYoungAccount) return `注册 ${item.accountAgeDays} 天，${youngAccountRuleLabel()}`;
+    return item.urls?.[0] || 'profile referral link';
+  }
+
   function rememberReferralAccount(handle, urls, opts = {}) {
     const key = normalizeHandle(handle);
     if (!key) return;
     const cleanUrls = [...new Set((Array.isArray(urls) ? urls : []).map(u => String(u || '').trim()).filter(Boolean))];
     if (cleanUrls.length === 0 && opts.allowNegative !== true) return;
-    referralCache.set(key, { isReferral: cleanUrls.length > 0, urls: cleanUrls, ts: Date.now() });
+    const existing = referralCache.get(key);
+    const existingEffective = materializeReferralItem(existing);
+    if (cleanUrls.length === 0 && !opts.createdAt && existingEffective?.isReferral) return;
+    const mergedUrls = cleanUrls.length > 0
+      ? [...new Set([...(existing?.urls || []), ...cleanUrls])]
+      : (existing?.urls || []);
+    const createdAt = String(opts.createdAt || existing?.createdAt || '');
+    const age = accountAgeInfo(createdAt);
+    const rawItem = {
+      isReferral: false,
+      isLinkReferral: mergedUrls.length > 0,
+      isYoungAccount: isYoungAccountByAge(age),
+      urls: mergedUrls,
+      createdAt,
+      accountAgeDays: age ? age.ageDays : null,
+      ts: Date.now(),
+    };
+    rawItem.isReferral = materializeReferralItem(rawItem).isReferral;
+    referralCache.set(key, rawItem);
     if (!referralSaveTimer) {
       referralSaveTimer = setTimeout(() => {
         referralSaveTimer = null;
@@ -488,18 +690,80 @@
     return [...new Set(out.map(v => String(v || '').trim()).filter(v => REFERRAL_X_LINK_RE.test(v)))];
   }
 
-  function extractProfileXLinks(legacy) {
-    const candidates = [];
+  function extractAnyLinksFromText(value) {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    REFERRAL_ANY_LINK_RE.lastIndex = 0;
+    return text.match(REFERRAL_ANY_LINK_RE) || [];
+  }
+
+  function collectReferralAnyLinks(candidates) {
+    const out = [];
+    (Array.isArray(candidates) ? candidates : []).forEach(v => {
+      out.push(...extractAnyLinksFromText(v));
+    });
+    return [...new Set(out.map(v => String(v || '').trim()).filter(Boolean))];
+  }
+
+  function profileHasReferralIntent(text) {
+    return stripInvisible(String(text || '')).includes('大号');
+  }
+
+  function rememberReferralIntentHint(handle, text) {
+    const key = normalizeHandle(handle);
+    const clean = stripInvisible(String(text || '')).trim();
+    if (!key || !profileHasReferralIntent(clean)) return;
+    const prev = referralIntentHints.get(key) || '';
+    if (!prev.includes(clean)) referralIntentHints.set(key, [prev, clean].filter(Boolean).join(' '));
+  }
+
+  function referralLinksFromProfileFacts(facts) {
+    const texts = Array.isArray(facts?.texts) ? facts.texts : [];
+    const links = Array.isArray(facts?.links) ? facts.links : [];
+    const candidates = [...texts, ...links];
+    const out = collectReferralXLinks(candidates);
+    if (profileHasReferralIntent(texts.join(' '))) out.push(...collectReferralAnyLinks(candidates));
+    return [...new Set(out.map(v => String(v || '').trim()).filter(Boolean))];
+  }
+
+  function extractProfileReferralLinks(legacy, extraTexts = []) {
+    const facts = { texts: [], links: [] };
     const pushUrl = u => {
       if (!u) return;
-      candidates.push(u.url, u.expanded_url, u.display_url);
+      facts.links.push(u.url, u.expanded_url, u.display_url);
     };
     legacy?.entities?.description?.urls?.forEach(pushUrl);
     legacy?.entities?.url?.urls?.forEach(pushUrl);
-    if (legacy?.url) candidates.push(legacy.url);
-    if (legacy?.description) candidates.push(legacy.description);
-    if (legacy?.location) candidates.push(legacy.location);
-    return collectReferralXLinks(candidates);
+    if (legacy?.url) facts.links.push(legacy.url);
+    if (legacy?.name) facts.texts.push(legacy.name);
+    if (legacy?.description) facts.texts.push(legacy.description);
+    if (legacy?.location) facts.texts.push(legacy.location);
+    facts.texts.push(...(Array.isArray(extraTexts) ? extraTexts : [extraTexts]));
+    return referralLinksFromProfileFacts(facts);
+  }
+
+  function userProfileExtraTexts(userObj, handle) {
+    const key = normalizeHandle(handle);
+    return [
+      key ? referralIntentHints.get(key) || '' : '',
+      userObj?.core?.name,
+      userObj?.profile?.name,
+      userObj?.display_name,
+      userObj?.name,
+    ].filter(Boolean);
+  }
+
+  function hasCompleteProfileLinkFields(legacy) {
+    if (!legacy || typeof legacy !== 'object') return false;
+    return 'description' in legacy
+      || 'location' in legacy
+      || 'url' in legacy
+      || !!legacy.entities?.description
+      || !!legacy.entities?.url;
+  }
+
+  function isReservedPathHandle(handle) {
+    return /^(?:home|i|intent|share|search|settings|privacy|tos|explore|notifications|messages|compose)$/i.test(handle || '');
   }
 
   function captureReferralAccountsFromData(data) {
@@ -514,9 +778,15 @@
 
       const legacy = cur.legacy && typeof cur.legacy === 'object' ? cur.legacy : null;
       if (legacy && legacy.screen_name != null) {
-        rememberReferralAccount(legacy.screen_name, extractProfileXLinks(legacy), { allowNegative: false });
+        rememberReferralAccount(legacy.screen_name, extractProfileReferralLinks(legacy, userProfileExtraTexts(cur, legacy.screen_name)), {
+          allowNegative: hasCompleteProfileLinkFields(legacy) || !!createdAtFromProfile(legacy, cur),
+          createdAt: createdAtFromProfile(legacy, cur),
+        });
       } else if (cur.screen_name != null) {
-        rememberReferralAccount(cur.screen_name, extractProfileXLinks(cur), { allowNegative: false });
+        rememberReferralAccount(cur.screen_name, extractProfileReferralLinks(cur, userProfileExtraTexts(cur, cur.screen_name)), {
+          allowNegative: hasCompleteProfileLinkFields(cur) || !!createdAtFromProfile(cur, cur),
+          createdAt: createdAtFromProfile(cur, cur),
+        });
       }
 
       if (Array.isArray(cur)) {
@@ -541,31 +811,100 @@
     const actionHandle = action?.getAttribute('aria-label')?.match(/@([A-Za-z0-9_]{1,15})\b/)?.[1];
     if (actionHandle) return actionHandle;
 
+    const aboutLink = scope.querySelector?.('a[href^="/"][href$="/about"]');
+    const aboutHandle = aboutLink?.getAttribute('href')?.match(/^\/([A-Za-z0-9_]{1,15})\/about$/)?.[1];
+    if (aboutHandle) return aboutHandle;
+
+    const profileLink = [...(scope.querySelectorAll?.('a[href^="/"]') || [])].find(a => {
+      const handle = a.getAttribute('href')?.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(?:about|photo|with_replies|media|highlights|likes|verified_followers|following|followers))?$/)?.[1];
+      return handle && !isReservedPathHandle(handle);
+    });
+    const profileHandle = profileLink?.getAttribute('href')?.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(?:about|photo|with_replies|media|highlights|likes|verified_followers|following|followers))?$/)?.[1];
+    if (profileHandle) return profileHandle;
+
     const pathHandle = location.pathname.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(?:with_replies|media|highlights|likes|about)?)?$/)?.[1];
-    return pathHandle || null;
+    return pathHandle && !isReservedPathHandle(pathHandle) ? pathHandle : null;
+  }
+
+  function profileScopeForNode(node) {
+    return node.closest?.('[role="dialog"]')
+      || node.closest?.('[data-testid="primaryColumn"]')
+      || node.closest?.('[data-testid="cellInnerDiv"]')
+      || node;
+  }
+
+  function pushProfileNodeFacts(node, facts) {
+    if (!node || !facts) return;
+    facts.texts.push(getTextWithEmoji(node) || node.textContent || '');
+    node.querySelectorAll?.('a,span').forEach(el => {
+      facts.texts.push(el.textContent, el.getAttribute('title'), el.getAttribute('aria-label'));
+      facts.links.push(el.getAttribute('href'));
+    });
+  }
+
+  const PROFILE_FACT_SELECTOR = '[data-testid="UserProfileHeader_Items"],[data-testid="UserDescription"],[data-testid="UserName"]';
+
+  function extractProfileFactsFromDom(scope) {
+    const facts = { texts: [], links: [] };
+    const nodes = new Set();
+    if (scope.matches?.(PROFILE_FACT_SELECTOR)) nodes.add(scope);
+    scope.querySelectorAll?.(PROFILE_FACT_SELECTOR).forEach(n => nodes.add(n));
+    nodes.forEach(node => pushProfileNodeFacts(node, facts));
+    return facts;
   }
 
   function captureReferralAccountsFromProfileDom(root = document) {
-    const headerItems = root.querySelectorAll?.('[data-testid="UserProfileHeader_Items"]') || [];
-    headerItems.forEach(items => {
-      const scope = items.closest('[role="dialog"]')
-        || items.closest('[data-testid="primaryColumn"]')
-        || items.closest('[data-testid="cellInnerDiv"]')
-        || document;
+    const scopes = new Set();
+    const captured = new Set();
+    root.querySelectorAll?.(PROFILE_FACT_SELECTOR).forEach(node => {
+      scopes.add(node);
+      scopes.add(profileScopeForNode(node));
+    });
+    if (root.matches?.(PROFILE_FACT_SELECTOR)) {
+      scopes.add(root);
+      scopes.add(profileScopeForNode(root));
+    }
+
+    scopes.forEach(scope => {
       const handle = extractHandleFromProfileDom(scope);
       if (!handle) return;
+      const links = referralLinksFromProfileFacts(extractProfileFactsFromDom(scope));
+      if (links.length) {
+        rememberReferralAccount(handle, links, { allowNegative: false });
+        captured.add(normalizeHandle(handle));
+      }
+    });
+    return [...captured];
+  }
 
-      const candidates = [items.textContent];
-      items.querySelectorAll('a,span').forEach(el => {
-        candidates.push(
-          el.textContent,
-          el.getAttribute('href'),
-          el.getAttribute('title'),
-          el.getAttribute('aria-label')
-        );
-      });
-      const links = collectReferralXLinks(candidates);
-      if (links.length) rememberReferralAccount(handle, links, { allowNegative: false });
+  function inspectReferralProfileDom(root = document) {
+    const scopes = new Set();
+    root.querySelectorAll?.(PROFILE_FACT_SELECTOR).forEach(node => {
+      scopes.add(node);
+      scopes.add(profileScopeForNode(node));
+    });
+    if (root.matches?.(PROFILE_FACT_SELECTOR)) {
+      scopes.add(root);
+      scopes.add(profileScopeForNode(root));
+    }
+
+    return [...scopes].map((scope, index) => {
+      const facts = extractProfileFactsFromDom(scope);
+      const text = stripInvisible(facts.texts.filter(Boolean).join(' ')).replace(/\s+/g, ' ').trim();
+      const links = facts.links.filter(Boolean);
+      const referralLinks = referralLinksFromProfileFacts(facts);
+      const handle = normalizeHandle(extractHandleFromProfileDom(scope));
+      return {
+        index,
+        handle,
+        hasIntent: profileHasReferralIntent(text),
+        referralLinks,
+        text,
+        links,
+        node: scope.matches?.(PROFILE_FACT_SELECTOR)
+          ? scope.getAttribute('data-testid')
+          : scope.getAttribute?.('data-testid') || scope.getAttribute?.('role') || scope.tagName,
+      };
     });
   }
 
@@ -578,7 +917,7 @@
       saveReferralCache();
       return null;
     }
-    return item;
+    return materializeReferralItem(item);
   }
 
   function referralLookupQueryIds() {
@@ -594,6 +933,39 @@
       'x-twitter-active-user': 'yes',
       'x-twitter-auth-type': capturedApiHeaders?.['x-twitter-auth-type'] || 'OAuth2Session',
     };
+  }
+
+  function makeReferralError(message, status = 0, retryAfterMs = 0) {
+    const e = new Error(message);
+    e.status = status;
+    e.retryAfterMs = retryAfterMs;
+    e.rateLimited = status === 429 || retryAfterMs > 0;
+    return e;
+  }
+
+  function parseRetryAfterMs(headers) {
+    const m = String(headers || '').match(/^retry-after:\s*([^\r\n]+)/im);
+    if (!m) return 0;
+    const raw = m[1].trim();
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const dateMs = Date.parse(raw);
+    return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : 0;
+  }
+
+  function isReferralRateLimitError(e) {
+    return !!(e && e.rateLimited);
+  }
+
+  function warnReferralLookupFailure(e) {
+    if (referralWarned) return;
+    referralWarned = true;
+    if (isReferralRateLimitError(e)) {
+      const ms = Math.max(referralCooldownRemaining(), e.retryAfterMs || 0, REFERRAL_RATE_LIMIT_COOLDOWN);
+      showToast(`导流号查询触发限流，已暂停约 ${Math.ceil(ms / 60000)} 分钟`, true);
+    } else {
+      showToast('导流号查询失败：X API 暂不可用或限流', true);
+    }
   }
 
   function requestReferralAccountWithQueryId(handle, queryId) {
@@ -631,22 +1003,24 @@
         anonymous: false,
         onload(resp) {
           if (resp.status < 200 || resp.status >= 300) {
-            reject(new Error(`HTTP ${resp.status}`));
+            reject(makeReferralError(`HTTP ${resp.status}`, resp.status, parseRetryAfterMs(resp.responseHeaders)));
             return;
           }
           try {
             const data = JSON.parse(resp.responseText || '{}');
             captureReferralAccountsFromData(data);
-            const legacy = data?.data?.user?.result?.legacy;
+            const userResult = data?.data?.user?.result;
+            const legacy = userResult?.legacy;
             if (!legacy) throw new Error('missing user legacy');
-            const urls = extractProfileXLinks(legacy);
-            rememberReferralAccount(handle, urls, { allowNegative: true });
-            resolve({ isReferral: urls.length > 0, urls });
+            const urls = extractProfileReferralLinks(legacy, userProfileExtraTexts(userResult, key));
+            rememberReferralAccount(handle, urls, { allowNegative: true, createdAt: createdAtFromProfile(legacy, userResult) });
+            const remembered = cachedReferralAccount(handle);
+            resolve({ isReferral: !!remembered?.isReferral, urls: remembered?.urls || urls });
           } catch (e) {
             reject(e);
           }
         },
-        onerror() { reject(new Error('Network error')); },
+        onerror() { reject(makeReferralError('Network error')); },
       });
     });
   }
@@ -663,16 +1037,79 @@
         return result;
       } catch (e) {
         lastError = e;
+        if (isReferralRateLimitError(e)) throw e;
       }
     }
     throw lastError || new Error('referral lookup failed');
   }
 
-  function fetchReferralAccount(handle) {
+  // ── Cross-tab coordinated referral lookup ────────────────────────────
+  // Profile lookups are easy to rate-limit when many X tabs are open. Keep one
+  // same-origin queue across tabs and share cooldown state through localStorage.
+  const LS_LAST_REFERRAL_LOOKUP = 'xfs-last-referral-lookup';
+  const LS_REFERRAL_COOLDOWN_UNTIL = 'xfs-referral-cooldown-until-v2';
+
+  function referralCooldownRemaining() {
+    const until = parseInt(localStorage.getItem(LS_REFERRAL_COOLDOWN_UNTIL) || '0', 10);
+    return Math.max(0, until - Date.now());
+  }
+
+  function setReferralCooldown(ms) {
+    if (!ms || ms <= 0) return;
+    const next = Date.now() + ms;
+    const cur = parseInt(localStorage.getItem(LS_REFERRAL_COOLDOWN_UNTIL) || '0', 10);
+    if (next > cur) localStorage.setItem(LS_REFERRAL_COOLDOWN_UNTIL, String(next));
+  }
+
+  function rememberReferralFailure(key, e) {
+    referralFailureCache.set(key, {
+      ts: Date.now(),
+      rateLimited: isReferralRateLimitError(e),
+    });
+  }
+
+  function recentReferralFailure(key) {
+    const item = referralFailureCache.get(key);
+    if (!item) return false;
+    if (Date.now() - item.ts > REFERRAL_FAILURE_TTL) {
+      referralFailureCache.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  async function referralRequestCoordinated(handle) {
+    const run = async () => {
+      const cooldown = referralCooldownRemaining();
+      if (cooldown > 0) throw makeReferralError('referral lookup cooling down', 429, cooldown);
+
+      const gap = REFERRAL_MIN_GAP + Math.floor(Math.random() * REFERRAL_JITTER);
+      const elapsed = Date.now() - parseInt(localStorage.getItem(LS_LAST_REFERRAL_LOOKUP) || '0', 10);
+      if (elapsed < gap) await sleep(gap - elapsed);
+      localStorage.setItem(LS_LAST_REFERRAL_LOOKUP, String(Date.now()));
+
+      try {
+        return await requestReferralAccount(handle);
+      } catch (e) {
+        if (isReferralRateLimitError(e)) {
+          setReferralCooldown(Math.max(e.retryAfterMs || 0, REFERRAL_RATE_LIMIT_COOLDOWN));
+        }
+        throw e;
+      }
+    };
+
+    if (navigator.locks?.request) return navigator.locks.request('xfs-referral-lookup-lock', run);
+    return run();
+  }
+
+  function fetchReferralAccount(handle, opts = {}) {
     const key = normalizeHandle(handle);
     if (!key) return Promise.reject(new Error('missing handle'));
     const cached = cachedReferralAccount(key);
-    if (cached !== null) return Promise.resolve(cached);
+    if (cached !== null && !(opts.forceRefresh && cached.isReferral === false)) return Promise.resolve(cached);
+    const cooldown = referralCooldownRemaining();
+    if (cooldown > 0) return Promise.reject(makeReferralError('referral lookup cooling down', 429, cooldown));
+    if (!opts.forceRefresh && recentReferralFailure(key)) return Promise.reject(makeReferralError('recent referral lookup failure'));
     if (referralPending.has(key)) return referralPending.get(key);
 
     const promise = new Promise((resolve, reject) => {
@@ -685,22 +1122,154 @@
 
   async function processReferralQueue() {
     if (referralQueueActive || referralQueue.length === 0) return;
+    const cooldown = referralCooldownRemaining();
+    if (cooldown > 0) {
+      clearTimeout(referralQueueTimer);
+      referralQueueTimer = setTimeout(processReferralQueue, Math.min(cooldown + 250, REFERRAL_RATE_LIMIT_COOLDOWN));
+      return;
+    }
     referralQueueActive = true;
     const item = referralQueue.shift();
-    const elapsed = Date.now() - referralLastRequest;
-    if (elapsed < REFERRAL_MIN_GAP) await sleep(REFERRAL_MIN_GAP - elapsed);
-    referralLastRequest = Date.now();
     try {
-      const result = await requestReferralAccount(item.handle);
+      const result = await referralRequestCoordinated(item.handle);
       item.resolve(result);
     } catch (e) {
       console.debug(`[XFS] referral lookup failed @${item.handle}:`, e);
+      rememberReferralFailure(item.key, e);
       item.reject(e);
     } finally {
       referralPending.delete(item.key);
       referralQueueActive = false;
-      setTimeout(processReferralQueue, 0);
+      referralQueueTimer = setTimeout(processReferralQueue, 0);
     }
+  }
+
+  function referralDebugSnapshot() {
+    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
+    const articles = [...document.querySelectorAll('article[data-testid="tweet"]')].map((art, index) => {
+      const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+      const cached = handle ? cachedReferralAccount(handle) : null;
+      const displayName = handle ? extractDisplayNameFromArticle(art, handle) : '';
+      return {
+        index,
+        isFirstArticle: art === firstArt,
+        handle,
+        displayName,
+        referralIntentHint: handle ? referralIntentHints.get(handle) || '' : '',
+        referralDataset: art.dataset.xfsReferralAccount || '',
+        queued: art.dataset.xfsReferralQueued || '',
+        cached,
+        recentFailure: handle ? recentReferralFailure(handle) : false,
+        text: stripInvisible((art.querySelector('[data-testid="tweetText"]')?.textContent || '').slice(0, 180)),
+      };
+    });
+    const profileScopes = inspectReferralProfileDom(document);
+    const domCapturedHandles = captureReferralAccountsFromProfileDom(document);
+    const handles = [...new Set([
+      ...articles.filter(a => !a.isFirstArticle).map(a => a.handle).filter(Boolean),
+      ...domCapturedHandles,
+    ])];
+    const snapshot = {
+      version: GM_info?.script?.version || '',
+      href: location.href,
+      path: location.pathname,
+      referral: {
+        cacheKey: REFERRAL_CACHE_KEY,
+        cooldownMs: referralCooldownRemaining(),
+        pending: [...referralPending.keys()],
+        queue: referralQueue.map(item => item.key),
+        queueActive: referralQueueActive,
+        autoReferralDetectActive,
+        hideReferralActive,
+        youngAccountFilterActive,
+        youngAccountCutoffMode,
+        youngAccountMaxAgeDays,
+        youngAccountCutoffDate,
+        userLookupQueryId,
+        hasCapturedApiHeaders: !!capturedApiHeaders,
+      },
+      handles,
+      profileScopes,
+      articles,
+    };
+    console.group('[XFS DEBUG] referral snapshot');
+    console.log(snapshot);
+    console.table(profileScopes.map(s => ({
+      index: s.index,
+      handle: s.handle,
+      hasIntent: s.hasIntent,
+      referralLinks: s.referralLinks.join(' | '),
+      text: s.text.slice(0, 120),
+    })));
+    console.table(articles.map(a => ({
+      index: a.index,
+      first: a.isFirstArticle,
+      handle: a.handle,
+      name: a.displayName,
+      hint: a.referralIntentHint,
+      dataset: a.referralDataset,
+      queued: a.queued,
+      cached: a.cached ? `${a.cached.isReferral ? 'referral' : 'negative'} ${referralItemDescription(a.cached)}` : '',
+      failure: a.recentFailure,
+    })));
+    console.groupEnd();
+    copyText(JSON.stringify(snapshot, null, 2)).then(ok => {
+      showToast(ok ? 'XFS debug 信息已复制' : 'XFS debug 已输出到 Console', !ok);
+    });
+    return snapshot;
+  }
+
+  async function referralDebugProbe(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) {
+      showToast('XFS debug: 缺少 handle', true);
+      return null;
+    }
+    const before = cachedReferralAccount(key);
+    const out = {
+      handle: key,
+      before,
+      cooldownMs: referralCooldownRemaining(),
+      recentFailure: recentReferralFailure(key),
+      result: null,
+      after: null,
+      error: null,
+    };
+    try {
+      out.result = await fetchReferralAccount(key, { forceRefresh: true });
+    } catch (e) {
+      out.error = {
+        message: e?.message || String(e),
+        status: e?.status || 0,
+        retryAfterMs: e?.retryAfterMs || 0,
+        rateLimited: !!e?.rateLimited,
+      };
+    }
+    out.after = cachedReferralAccount(key);
+    console.log('[XFS DEBUG] referral probe', out);
+    copyText(JSON.stringify(out, null, 2)).then(ok => {
+      showToast(ok ? `XFS debug @${key} 已复制` : `XFS debug @${key} 已输出到 Console`, !ok);
+    });
+    return out;
+  }
+
+  function exposeDebugTools() {
+    const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    win.XFS_DEBUG = {
+      referral: referralDebugSnapshot,
+      probeReferral: referralDebugProbe,
+      clearReferralState() {
+        referralCache.clear();
+        referralFailureCache.clear();
+        referralPending.clear();
+        referralQueue.length = 0;
+        referralHintRefreshDone.clear();
+        localStorage.removeItem(LS_REFERRAL_COOLDOWN_UNTIL);
+        saveReferralCache();
+        showToast('XFS referral cache/cooldown 已清空', false);
+        return true;
+      },
+    };
   }
 
   // Strip Unicode Format-category characters (zero-width spaces, soft hyphens, etc.)
@@ -755,9 +1324,7 @@
   // Flags: m (^ matches line start), u (Unicode). Returns hit objects like getContextSnippets.
   function getRegexHits(text, patterns) {
     const hits = [];
-    for (const pat of patterns) {
-      let re;
-      try { re = new RegExp(pat, 'mu'); } catch (_) { continue; }
+    for (const { pat, re } of compiledRegexes(patterns)) {
       const m = re.exec(text);
       if (!m) continue;
       const idx = m.index;
@@ -776,7 +1343,9 @@
     const heartHits  = [...new Set(displayName.match(HEART_RE) || [])];
     const nameKwHits = SUSPECT_NAME_KWS.filter(kw => stripInvisible(displayName).toLowerCase().includes(kw.toLowerCase()));
     const kwHits     = getContextSnippets(fullText, SUSPECT_KWS, CTX_LEN);
-    const reHits     = getRegexHits(fullText, SUSPECT_RE_KWS);
+    const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS).map(h => ({ ...h, snippet: `昵称: ${h.snippet}` }));
+    const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS);
+    const reHits     = [...nameReHits, ...bodyReHits];
     const cats = new Set();
     if (heartHits.length  > 0) cats.add('heart');
     if (nameKwHits.length > 0) cats.add('name_kw');
@@ -803,6 +1372,7 @@
         if (t.startsWith('@') && t.length > 1 && !t.includes(' ')) { handle = t.slice(1); break; }
       }
       if (!handle) return;
+      if (blockedHandles.has(normalizeHandle(handle))) return;
 
       // Extract display name robustly: read all text+emoji from the entire
       // User-Name element, then cut off at '@handle' and whatever follows.
@@ -904,16 +1474,19 @@
   // multiple tabs are running block operations simultaneously.
   const LS_LAST_BLOCK = 'xfs-last-block';
 
-  async function blockUserCoordinated(handle, csrf) {
+  async function blockUserCoordinated(handle, csrf, shouldProceed) {
     return navigator.locks.request('xfs-block-lock', async () => {
+      if (shouldProceed && !shouldProceed()) return { skipped: true };
       // Jitter computed inside the lock: each block gets a fresh random gap.
       // localStorage timestamp reflects the actual gap used, so cross-tab
       // coordination sees the same effective rate regardless of which tab ran last.
       const gap     = BLOCK_DELAY + Math.floor(Math.random() * BLOCK_JITTER);
       const elapsed = Date.now() - parseInt(localStorage.getItem(LS_LAST_BLOCK) || '0', 10);
       if (elapsed < gap) await sleep(gap - elapsed);
+      if (shouldProceed && !shouldProceed()) return { skipped: true };
       localStorage.setItem(LS_LAST_BLOCK, String(Date.now()));
-      return blockUser(handle, csrf);
+      await blockUser(handle, csrf);
+      return { skipped: false };
     });
   }
 
@@ -949,9 +1522,11 @@
       if (!nameEl) return;
       let isMatch = false;
       for (const sp of nameEl.querySelectorAll('span')) {
-        if (sp.textContent.trim() === '@' + handle) { isMatch = true; break; }
+        if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
       }
       if (!isMatch) return;
+      art.dataset.xfsHideMatched = '0';
+      art.dataset.xfsReferralAccount = '0';
       // Strikethrough on the display name anchor (not the @handle).
       // setProperty with 'important' is required — X.com sets text-decoration:none on <a> elements.
       for (const a of nameEl.querySelectorAll('a')) {
@@ -973,7 +1548,7 @@
       if (!nameEl) return;
       let isMatch = false;
       for (const sp of nameEl.querySelectorAll('span')) {
-        if (sp.textContent.trim() === '@' + handle) { isMatch = true; break; }
+        if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
       }
       if (!isMatch) return;
       for (const a of nameEl.querySelectorAll('a')) {
@@ -1002,6 +1577,7 @@
     btnBorder: '#cfd9de',
     regexKw:   '#0d7a8a',
     referral:  '#5f6f89',
+    referralHot: '#f59e0b',
   };
 
   const CAT_META = {
@@ -1015,6 +1591,7 @@
 
   function showPanel(allUsers, opts = {}) {
     document.getElementById('xfs-panel')?.remove();
+    document.getElementById('xfs-panel-dock')?.remove();
 
     const topUsers = allUsers.slice(0, MAX_BLOCK);
     const overflow = allUsers.length - topUsers.length;
@@ -1038,12 +1615,12 @@
     // ── Adaptive column count & panel width ──
     // Estimate how many rows fit in one column based on viewport height.
     // ROW_H: conservative height covering both simple rows and suspect rows with context.
-    const ROW_H = 42;
+    const ROW_H = 34;
     const estBodyH = Math.max(200, window.innerHeight - 160); // 160 = top offset + hdr + kwBar + ftr
     const rowsPerCol = Math.max(6, Math.floor(estBodyH / ROW_H));
-    const colsNeeded = ordered.length === 0 ? 1
-      : Math.min(3, Math.ceil(ordered.length / rowsPerCol));
-    const COL_W = 300;
+    const colsNeeded = ordered.length === 0 ? 2
+      : Math.min(3, Math.max(2, Math.ceil(ordered.length / rowsPerCol)));
+    const COL_W = 260;
     const panelW = colsNeeded * COL_W;
 
     // Panel — flush left edge, adaptive width, semi-transparent
@@ -1086,26 +1663,43 @@
     closeBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:16px;color:${C.sub};padding:0 2px;line-height:1;`;
     closeBtn.onclick = () => panel.remove();
 
+    const dockBtn = document.createElement('button');
+    dockBtn.textContent = '收起';
+    dockBtn.title = '收起到左侧进度条';
+    dockBtn.style.cssText = `background:#fff;border:1px solid ${C.btnBorder};border-radius:8px;cursor:pointer;font-size:10px;color:${C.sub};padding:1px 6px;white-space:nowrap;`;
+
     hdr.appendChild(title);
     hdr.appendChild(badge);
     hdr.appendChild(authDot);
+    hdr.appendChild(dockBtn);
     hdr.appendChild(closeBtn);
 
     // ── Keyword management bar ──
     const kwBar = document.createElement('div');
     kwBar.id = 'xfs-kw-bar';
-    kwBar.style.cssText = `padding:4px 8px;border-bottom:1px solid ${C.border};display:flex;flex-direction:column;gap:4px;flex-shrink:0;background:${C.catBg};`;
+    kwBar.style.cssText = [
+      'position:absolute', 'top:42px', 'left:12px', 'right:12px',
+      'box-sizing:border-box',
+      'max-height:min(72vh, calc(100vh - 125px))',
+      'overflow:auto',
+      `padding:10px 12px`, `border:1px solid ${C.border}`,
+      'border-radius:10px',
+      'display:flex', 'flex-direction:column', 'gap:8px',
+      'background:rgba(255,255,255,0.98)',
+      'box-shadow:0 8px 22px rgba(0,0,0,0.16)',
+      'z-index:2',
+    ].join(';');
 
     function renderKwBar() {
       kwBar.innerHTML = '';
-      const rowCss = 'display:flex;flex-wrap:wrap;gap:3px;align-items:center;';
-      const refreshKwPanel = () => showPanel(scanPage(), { keywordsOpen: true });
+      const rowCss = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
+      const refreshKwPanel = () => renderKwBar();
       const toolsRow = document.createElement('div');
-      toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:5px;min-height:22px;';
+      toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:6px;min-height:28px;';
       const exportBtn = document.createElement('button');
       exportBtn.textContent = '导出自定义';
       exportBtn.title = '只复制手动添加的自定义关键词 JSON，不包含系统预设';
-      exportBtn.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:2px 8px;font-size:11px;line-height:16px;font-weight:600;cursor:pointer;`;
+      exportBtn.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:4px 10px;font-size:12px;line-height:18px;font-weight:600;cursor:pointer;`;
       exportBtn.onclick = exportKws;
       const mergeBtn = document.createElement('button');
       mergeBtn.textContent = '合并导入';
@@ -1122,31 +1716,6 @@
       toolsRow.appendChild(replaceBtn);
       kwBar.appendChild(toolsRow);
 
-      const referralRow = document.createElement('div');
-      referralRow.style.cssText = rowCss;
-      const referralLbl = document.createElement('span');
-      referralLbl.textContent = '导流:';
-      referralLbl.style.cssText = `font-size:10px;color:${C.referral};flex-shrink:0;min-width:36px;`;
-      referralRow.appendChild(referralLbl);
-      const referralToggle = document.createElement('input');
-      referralToggle.type = 'checkbox';
-      referralToggle.checked = hideReferralActive;
-      referralToggle.title = '隐藏主页简介/网址中含 x.com 导流链接的账号';
-      referralToggle.style.cssText = 'margin:0 2px 0 0;';
-      referralToggle.onchange = () => {
-        hideReferralActive = referralToggle.checked;
-        GM_setValue('hide_referral_accounts', hideReferralActive);
-        updateReferralBtn();
-        if (hideReferralActive) applyReferralForVisible();
-        applyHideAll();
-      };
-      referralRow.appendChild(referralToggle);
-      const referralText = document.createElement('span');
-      referralText.textContent = '隐藏 profile 含 x.com 链接的账号';
-      referralText.style.cssText = `font-size:10px;color:${C.text};`;
-      referralRow.appendChild(referralText);
-      kwBar.appendChild(referralRow);
-
       // ── Row 1: Content keywords ──
       const textRow = document.createElement('div');
       textRow.style.cssText = rowCss;
@@ -1156,7 +1725,7 @@
       textRow.appendChild(textLbl);
       SUSPECT_KWS.forEach((kw, i) => {
         const chip = document.createElement('span');
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:1px 5px;background:#fff;border:1px solid ${C.btnBorder};border-radius:10px;font-size:10px;color:${C.text};`;
+        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.btnBorder};border-radius:10px;font-size:10px;color:${C.text};`;
         chip.textContent = kw + ' ';
         const del = document.createElement('button');
         del.textContent = '×';
@@ -1167,7 +1736,7 @@
       });
       const inp = document.createElement('input');
       inp.placeholder = '+ 内容';
-      inp.style.cssText = `border:1px solid ${C.btnBorder};border-radius:10px;padding:1px 6px;font-size:10px;width:55px;outline:none;`;
+      inp.style.cssText = `border:1px solid ${C.btnBorder};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
       const addKw = () => {
         const v = inp.value.trim();
         if (v && !SUSPECT_KWS.includes(v)) { SUSPECT_KWS.push(v); saveKws(); refreshKwPanel(); }
@@ -1177,7 +1746,7 @@
       textRow.appendChild(inp);
       const addBtn = document.createElement('button');
       addBtn.textContent = '+';
-      addBtn.style.cssText = `background:${C.blockRed};color:#fff;border:none;border-radius:10px;padding:1px 7px;font-size:11px;cursor:pointer;`;
+      addBtn.style.cssText = `background:${C.blockRed};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
       addBtn.onclick = addKw;
       textRow.appendChild(addBtn);
       // ── Row 2: Name keywords ──
@@ -1189,7 +1758,7 @@
       nameRow.appendChild(nameLbl);
       SUSPECT_NAME_KWS.forEach((kw, i) => {
         const chip = document.createElement('span');
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:1px 5px;background:#fff;border:1px solid ${C.nameKw};border-radius:10px;font-size:10px;color:${C.nameKw};`;
+        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.nameKw};border-radius:10px;font-size:10px;color:${C.nameKw};`;
         chip.textContent = kw + ' ';
         const del = document.createElement('button');
         del.textContent = '×';
@@ -1200,7 +1769,7 @@
       });
       const nInp = document.createElement('input');
       nInp.placeholder = '+ 用户名';
-      nInp.style.cssText = `border:1px solid ${C.nameKw};border-radius:10px;padding:1px 6px;font-size:10px;width:55px;outline:none;`;
+      nInp.style.cssText = `border:1px solid ${C.nameKw};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
       const addNKw = () => {
         const v = nInp.value.trim();
         if (v && !SUSPECT_NAME_KWS.includes(v)) { SUSPECT_NAME_KWS.push(v); saveKws(); refreshKwPanel(); }
@@ -1210,7 +1779,7 @@
       nameRow.appendChild(nInp);
       const addNBtn = document.createElement('button');
       addNBtn.textContent = '+';
-      addNBtn.style.cssText = `background:${C.nameKw};color:#fff;border:none;border-radius:10px;padding:1px 7px;font-size:11px;cursor:pointer;`;
+      addNBtn.style.cssText = `background:${C.nameKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
       addNBtn.onclick = addNKw;
       nameRow.appendChild(addNBtn);
       kwBar.appendChild(nameRow);
@@ -1226,7 +1795,7 @@
       SUSPECT_RE_KWS.forEach((pat, i) => {
         const chip = document.createElement('span');
         chip.title = pat;
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:1px 5px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:160px;`;
+        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:360px;`;
         const lbl = document.createElement('span');
         lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         lbl.textContent = pat;
@@ -1241,7 +1810,7 @@
       const reInp = document.createElement('input');
       reInp.placeholder = '+ 正则';
       reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入';
-      reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:1px 6px;font-size:10px;width:64px;outline:none;`;
+      reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
       const addRe = () => {
         const v = reInp.value.trim();
         if (!v) return;
@@ -1260,24 +1829,179 @@
       reRow.appendChild(reInp);
       const addReBtn = document.createElement('button');
       addReBtn.textContent = '+';
-      addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:1px 7px;font-size:11px;cursor:pointer;`;
+      addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
       addReBtn.onclick = addRe;
       reRow.appendChild(addReBtn);
       kwBar.appendChild(reRow);
     }
     renderKwBar();
-    kwBar.style.display = opts.keywordsOpen ? '' : 'none'; // collapsed by default
+    kwBar.style.display = opts.keywordsOpen ? 'flex' : 'none'; // popup, collapsed by default
 
     // Toggle button — inserted into hdr before the × close button
     const kwToggle = document.createElement('button');
-    kwToggle.textContent = opts.keywordsOpen ? '关键词 ▴' : '关键词 ▾';
+    kwToggle.textContent = opts.keywordsOpen ? '关键词 ×' : '关键词';
     kwToggle.style.cssText = `background:none;border:1px solid ${C.btnBorder};border-radius:8px;cursor:pointer;font-size:10px;color:${C.sub};padding:1px 6px;white-space:nowrap;`;
     kwToggle.onclick = () => {
       const nowHidden = kwBar.style.display === 'none';
-      kwBar.style.display = nowHidden ? '' : 'none';
-      kwToggle.textContent = nowHidden ? '关键词 ▴' : '关键词 ▾';
+      kwBar.style.display = nowHidden ? 'flex' : 'none';
+      kwToggle.textContent = nowHidden ? '关键词 ×' : '关键词';
     };
     hdr.insertBefore(kwToggle, closeBtn);
+
+    let dockIndicator = null;
+    let dockIndicatorLabel = null;
+    let dockCaption = null;
+    let dockRestoreBtn = null;
+    let dockRefreshBtn = null;
+    let dockRefreshVisible = false;
+    let dockStatusText = '';
+    function dockText() {
+      return blockBtn?.textContent || badge.textContent || 'XFS';
+    }
+    function compactDockText(text) {
+      const s = String(text || '').trim();
+      const progress = s.match(/\d+\s*\/\s*\d+(?:\s*\(\d+失败\))?/);
+      if (progress) return progress[0].replace(/\s+/g, '');
+      const checked = s.match(/屏蔽\s*\((\d+)\)/);
+      if (checked) return `屏蔽${checked[1]}`;
+      const done = s.match(/完成\s*(\d+)/);
+      if (done) return `完成${done[1]}`;
+      return s.length > 12 ? `${s.slice(0, 12)}...` : s;
+    }
+    function updateDockIndicator(text = dockText(), opts = {}) {
+      dockStatusText = text;
+      if ('showRefresh' in opts) dockRefreshVisible = !!opts.showRefresh;
+      if (!dockIndicator) return;
+      if (dockIndicatorLabel) dockIndicatorLabel.textContent = compactDockText(text);
+      if (dockRefreshBtn) dockRefreshBtn.style.display = dockRefreshVisible ? 'flex' : 'none';
+      dockIndicator.title = `X Fraud Scanner · ${text}`;
+    }
+    function openDockIndicator() {
+      document.getElementById('xfs-panel-dock')?.remove();
+      dockIndicator = document.createElement('div');
+      dockIndicator.id = 'xfs-panel-dock';
+      dockIndicator.style.cssText = [
+        'position:fixed', 'left:0', 'top:92px',
+        'width:90px', 'box-sizing:border-box',
+        'max-height:calc(100vh - 128px)',
+        'background:rgba(255,255,255,0.72)', `color:${C.text}`,
+        'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
+        `border:1px solid rgba(207,217,222,0.58)`, 'border-left:none',
+        'border-radius:0 10px 10px 0',
+        'box-shadow:1px 0 8px rgba(0,0,0,0.10)',
+        'font-size:11px', 'font-weight:700', 'line-height:1.25',
+        'padding:10px',
+        'display:flex', 'flex-direction:column', 'align-items:center', 'gap:8px',
+        'z-index:2147483647',
+        `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+        'white-space:normal', 'overflow:hidden',
+      ].join(';');
+      const closeDockBtn = document.createElement('button');
+      closeDockBtn.type = 'button';
+      closeDockBtn.textContent = '\u00d7';
+      closeDockBtn.title = '关闭进度提示，后台继续执行';
+      closeDockBtn.style.cssText = [
+        'flex-shrink:0',
+        'width:18px', 'height:18px', 'line-height:1',
+        'padding:0', 'border:none', 'border-radius:8px',
+        'background:rgba(15,20,25,0.06)', `color:${C.sub}`,
+        'font-size:12px', 'font-weight:700',
+        'cursor:pointer', 'display:flex', 'align-items:center', 'justify-content:center',
+        'appearance:none', '-webkit-appearance:none',
+      ].join(';');
+      closeDockBtn.onclick = e => {
+        e.stopPropagation();
+        dockIndicator.remove();
+        dockIndicator = null;
+        dockIndicatorLabel = null;
+        dockCaption = null;
+        dockRestoreBtn = null;
+        dockRefreshBtn = null;
+      };
+      const dockTop = document.createElement('div');
+      dockTop.style.cssText = [
+        'width:calc(100% + 20px)', 'box-sizing:border-box',
+        'margin:-10px -10px 0', 'padding:6px 8px',
+        'display:flex', 'align-items:center', 'justify-content:space-between', 'gap:6px',
+        'background:rgba(15,20,25,0.035)',
+        `border-bottom:1px solid rgba(207,217,222,0.48)`,
+        'border-radius:0 9px 0 0',
+      ].join(';');
+      dockCaption = document.createElement('div');
+      dockCaption.textContent = '扫描面板';
+      dockCaption.style.cssText = [
+        `flex:1;color:${C.sub};opacity:0.78`,
+        'font-size:10px', 'font-weight:700', 'line-height:1',
+        'text-align:left', 'white-space:nowrap', 'overflow:hidden',
+      ].join(';');
+      dockIndicatorLabel = document.createElement('div');
+      dockIndicatorLabel.style.cssText = [
+        `color:${C.text}`, 'font:inherit', 'text-align:center',
+        'width:100%', 'min-height:16px', 'overflow:hidden', 'overflow-wrap:anywhere',
+      ].join(';');
+      const dockActions = document.createElement('div');
+      dockActions.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;';
+      dockRestoreBtn = document.createElement('button');
+      dockRestoreBtn.type = 'button';
+      dockRestoreBtn.textContent = '恢复面板';
+      dockRestoreBtn.title = '恢复扫描结果面板';
+      dockRestoreBtn.style.cssText = [
+        'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
+        `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
+        'font-size:11px', 'font-weight:700', 'line-height:1',
+        'width:70px', 'height:25px', 'padding:0', 'cursor:pointer',
+        'box-sizing:border-box', 'text-align:center', 'white-space:nowrap',
+        'display:flex', 'align-items:center', 'justify-content:center',
+        'appearance:none', '-webkit-appearance:none',
+      ].join(';');
+      dockRestoreBtn.onclick = e => {
+        e.stopPropagation();
+        panel.style.display = 'flex';
+        panelDockedActive = false;
+        GM_setValue('panel_docked', false);
+        dockIndicator.remove();
+        dockIndicator = null;
+        dockIndicatorLabel = null;
+        dockCaption = null;
+        dockRestoreBtn = null;
+        dockRefreshBtn = null;
+      };
+      dockRefreshBtn = document.createElement('button');
+      dockRefreshBtn.type = 'button';
+      dockRefreshBtn.textContent = '刷新';
+      dockRefreshBtn.title = '刷新页面';
+      dockRefreshBtn.style.cssText = [
+        'display:none',
+        'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
+        `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
+        'font-size:11px', 'font-weight:700', 'line-height:1',
+        'width:70px', 'height:25px', 'padding:0', 'cursor:pointer',
+        'box-sizing:border-box', 'text-align:center', 'white-space:nowrap',
+        'align-items:center', 'justify-content:center',
+        'appearance:none', '-webkit-appearance:none',
+      ].join(';');
+      dockRefreshBtn.onclick = e => {
+        e.stopPropagation();
+        location.reload();
+      };
+      dockTop.appendChild(dockCaption);
+      dockTop.appendChild(closeDockBtn);
+      dockIndicator.appendChild(dockTop);
+      dockIndicator.appendChild(dockIndicatorLabel);
+      dockActions.appendChild(dockRestoreBtn);
+      dockActions.appendChild(dockRefreshBtn);
+      dockIndicator.appendChild(dockActions);
+      updateDockIndicator(dockStatusText || dockText(), { showRefresh: dockRefreshVisible });
+      document.body.appendChild(dockIndicator);
+    }
+    dockBtn.onclick = () => {
+      kwBar.style.display = 'none';
+      kwToggle.textContent = '关键词';
+      panelDockedActive = true;
+      GM_setValue('panel_docked', true);
+      panel.style.display = 'none';
+      openDockIndicator();
+    };
 
     // ── Body: CSS multi-column, fills left→right ──
     // Wrapper needed so column-fill:auto sees a fixed height
@@ -1311,42 +2035,42 @@
         wrap.style.cssText = 'break-inside:avoid;page-break-inside:avoid;';
 
         const row = document.createElement('label');
-        row.style.cssText = `display:flex;align-items:flex-start;gap:5px;padding:2px 6px 2px 5px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.25;`;
+        row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px 5px 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
         row.onmouseenter = () => { if (!row.dataset.blocked) row.style.background = C.rowHover; };
         row.onmouseleave = () => { if (!row.dataset.blocked) row.style.background = ''; };
 
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = opts.precheck !== false;
-        cb.style.cssText = 'width:12px;height:12px;margin-top:2px;flex-shrink:0;cursor:pointer;accent-color:#f4212e;';
+        cb.style.cssText = 'width:11px;height:11px;margin-top:2px;flex-shrink:0;cursor:pointer;accent-color:#f4212e;';
         allCheckboxes.push({ cb, handle: user.handle, row });
 
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
-        let html = `<div class="xfs-name" style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(user.displayName)}</div>`;
-        html += `<div style="color:${C.sub};font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@${esc(user.handle)}</div>`;
+        let html = `<div class="xfs-name" style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(user.displayName)}</div>`;
+        html += `<div style="color:${C.sub};font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@${esc(user.handle)}</div>`;
         if (user.cats.has('heart') && user.heartHits && user.heartHits.length > 0) {
-          html += `<div style="font-size:10px;color:${C.heart};">[心形] ${esc(user.heartHits.join(''))} 在用户名中</div>`;
+          html += `<div style="font-size:9px;color:${C.heart};">[心形] ${esc(user.heartHits.join(''))} 在用户名中</div>`;
         }
         if (user.cats.has('name_kw') && user.nameKwHits && user.nameKwHits.length > 0) {
           user.nameKwHits.forEach(kw => {
-            html += `<div style="font-size:10px;color:${C.nameKw};">[用户名] ${esc(kw)}</div>`;
+            html += `<div style="font-size:9px;color:${C.nameKw};">[用户名] ${esc(kw)}</div>`;
           });
         }
         // For name/heart matches show first 10 words of the tweet so users can
         // quickly judge borderline cases without opening the tweet.
         if ((user.cats.has('heart') || user.cats.has('name_kw')) && user.tweetSnippet) {
-          html += `<div style="font-size:10px;color:${C.sub};font-style:italic;word-break:break-all;">"${esc(user.tweetSnippet)}"</div>`;
+          html += `<div style="font-size:9px;color:${C.sub};font-style:italic;word-break:break-all;">"${esc(user.tweetSnippet)}"</div>`;
         }
         if (user.cats.has('suspect') && user.kwHits.length > 0) {
           user.kwHits.forEach(h => {
-            html += `<div style="font-size:10px;color:${C.suspect};word-break:break-all;">[${esc(h.kw)}] ${esc(h.snippet)}</div>`;
+            html += `<div style="font-size:9px;color:${C.suspect};word-break:break-all;">[${esc(h.kw)}] ${esc(h.snippet)}</div>`;
           });
         }
         if (user.cats.has('regex_kw') && user.reHits && user.reHits.length > 0) {
           user.reHits.forEach(h => {
             const label = h.pat.length > 18 ? h.pat.slice(0, 18) + '…' : h.pat;
-            html += `<div style="font-size:10px;color:${C.regexKw};word-break:break-all;" title="${esc(h.pat)}">[re: ${esc(label)}] ${esc(h.snippet)}</div>`;
+            html += `<div style="font-size:9px;color:${C.regexKw};word-break:break-all;" title="${esc(h.pat)}">[re: ${esc(label)}] ${esc(h.snippet)}</div>`;
           });
         }
         info.innerHTML = html;
@@ -1363,7 +2087,7 @@
     // ── Hint bar (revealed after blocking completes) ──
     const hint = document.createElement('div');
     hint.style.cssText = `padding:5px 12px;border-top:1px solid ${C.border};font-size:11px;color:${C.sub};text-align:center;flex-shrink:0;display:none;background:${C.catBg};`;
-    hint.textContent = '屏蔽已成功 · 请手动刷新页面以更新显示';
+    hint.textContent = '清理完成 · 点击完成按钮刷新页面';
 
     // ── Footer ──
     const ftr = document.createElement('div');
@@ -1386,14 +2110,23 @@
 
     const checkedCount = () => allCheckboxes.filter(({ cb }) => cb.checked).length;
     const blockBtn = mkBtn(`屏蔽 (${checkedCount()})`, true);
+    let blockingInProgress = false;
+    let blockingComplete = false;
 
     allCheckboxes.forEach(({ cb }) => {
-      cb.addEventListener('change', () => { blockBtn.textContent = `屏蔽 (${checkedCount()})`; });
+      cb.addEventListener('change', () => {
+        if (!blockingInProgress && !blockingComplete) blockBtn.textContent = `屏蔽 (${checkedCount()})`;
+      });
     });
 
     async function startBlocking() {
       if (blockBtn.disabled) return;
       const uniqueHandles = [...new Set(allCheckboxes.filter(({ cb }) => cb.checked).map(({ handle }) => handle))];
+      const isHandleStillChecked = handle => {
+        const key = normalizeHandle(handle);
+        return allCheckboxes.some(item => normalizeHandle(item.handle) === key && item.cb.checked);
+      };
+      let done = 0, failed = 0, skipped = 0;
       try {
         if (uniqueHandles.length === 0) return;
 
@@ -1401,8 +2134,8 @@
         if (!csrf) { alert('未找到登录凭证（ct0 cookie），请确认已登录 X/Twitter'); return; }
 
         stopBackgroundLoad = true;  // stop background scroll so page stays put
+        blockingInProgress = true;
         blockBtn.disabled = true;
-        deselBtn.disabled = true;
         selBtn.disabled = true;
 
         const rowMap = new Map();
@@ -1411,14 +2144,33 @@
           rowMap.get(handle).push(row);
         });
 
-        let done = 0, failed = 0;
         for (const handle of uniqueHandles) {
-          blockBtn.textContent = `⏳ ${done + 1}/${uniqueHandles.length}`;
+          if (!isHandleStillChecked(handle)) {
+            skipped++;
+            blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
+            updateDockIndicator();
+            continue;
+          }
+          blockBtn.textContent = `⏳ ${done + skipped + failed + 1}/${uniqueHandles.length}`;
+          updateDockIndicator();
           try {
-            await blockUserCoordinated(handle, csrf);
+            const result = await blockUserCoordinated(handle, csrf, () => isHandleStillChecked(handle));
+            if (result?.skipped) {
+              skipped++;
+              blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
+              updateDockIndicator();
+              continue;
+            }
             done++;
             blockedHandles.add(handle);
+            blockedHandles.add(normalizeHandle(handle));
+            matchedHandlesInView.delete(handle);
+            matchedHandlesInView.delete(normalizeHandle(handle));
+            matchedUsersCache.delete(handle);
+            matchedUsersCache.delete(normalizeHandle(handle));
+            updateHideBadge();
             dimArticlesByHandle(handle);
+            updateReferralBadge();
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               const bMatched = b.dataset.xfsMatched === '1';
               b.dataset.xfsState = 'blocked';
@@ -1440,13 +2192,23 @@
             failed++;
             console.warn(`[XFS] block @${handle} failed:`, e);
           }
-          blockBtn.textContent = `${done}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
+          blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
+          updateDockIndicator();
         }
 
-        blockBtn.textContent = `完成 ${done}${failed ? `，${failed} 失败` : ''}`;
+        blockingComplete = true;
+        blockingInProgress = false;
+        blockBtn.disabled = false;
+        blockBtn.textContent = `完成 ${done}${skipped ? `，跳过 ${skipped}` : ''}${failed ? `，${failed} 失败` : ''}，点击刷新`;
+        blockBtn.title = '清理完成，点击刷新页面';
+        blockBtn.onclick = () => location.reload();
+        badge.textContent = `完成 ${done} 个${skipped ? `，跳过 ${skipped} 个` : ''}${failed ? `，失败 ${failed} 个` : ''}`;
+        updateDockIndicator(badge.textContent, { showRefresh: true });
         hint.style.display = '';
+        markCleanupButtonsComplete(opts.refreshButtonIds);
       } finally {
-        opts.onBlockDone?.();
+        blockingInProgress = false;
+        opts.onBlockDone?.({ done, failed, skipped, total: uniqueHandles.length });
       }
     }
 
@@ -1458,7 +2220,7 @@
 
     const rateNote = document.createElement('div');
     rateNote.style.cssText = `padding:3px 12px 5px;font-size:10px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.6;background:${C.catBg};`;
-    rateNote.textContent = 'X.com 限制：每次屏蔽间隔 3-5 秒 · 建议单次会话不超过约 500 个，过多会触发强制登出';
+    rateNote.textContent = 'X.com 限制：每次屏蔽间隔 3-5 秒 · 执行中可取消勾选，未开始的账号会跳过';
 
     const scriptFtr = document.createElement('div');
     scriptFtr.style.cssText = `padding:2px 12px 4px;font-size:9px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.5;background:${C.catBg};`;
@@ -1484,6 +2246,12 @@
     // Escape key closes panel
     const closePanel = () => {
       panel.remove();
+      document.getElementById('xfs-panel-dock')?.remove();
+      dockIndicator = null;
+      dockIndicatorLabel = null;
+      dockCaption = null;
+      dockRestoreBtn = null;
+      dockRefreshBtn = null;
       document.removeEventListener('keydown', onEsc);
     };
     const onEsc = e => { if (e.key === 'Escape') closePanel(); };
@@ -1494,6 +2262,12 @@
     // Must happen after panel is in DOM so clientHeight is non-zero.
     requestAnimationFrame(() => {
       colContainer.style.height = body.clientHeight + 'px';
+      if (panelDockedActive) {
+        kwBar.style.display = 'none';
+        kwToggle.textContent = '关键词';
+        panel.style.display = 'none';
+        openDockIndicator();
+      }
       if (opts.autoBlock) setTimeout(startBlocking, 0);
     });
   }
@@ -1533,21 +2307,76 @@
     });
   }
 
+  function scanModeLabel(mode) {
+    return {
+      content: '内容扫描',
+      referral: '导流扫描',
+      sweep: '整页扫描',
+      list: '列表扫描',
+    }[mode] || '扫描';
+  }
+
+  function updateScanButtonsLocked() {
+    ['xfs-btn', 'xfs-referral-scan-btn', 'xfs-sweep-btn', 'xfs-list-btn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      if (activeScanMode) {
+        if (!btn.dataset.xfsPrevTitle) btn.dataset.xfsPrevTitle = btn.title || '';
+        btn.disabled = true;
+        btn.style.opacity = '0.4';
+        btn.style.pointerEvents = 'none';
+        btn.title = `${scanModeLabel(activeScanMode)}正在执行`;
+      } else {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+        if (btn.dataset.xfsPrevTitle != null) {
+          if (btn.textContent !== DONE_SVG) btn.title = btn.dataset.xfsPrevTitle;
+          delete btn.dataset.xfsPrevTitle;
+        }
+      }
+    });
+  }
+
+  function beginScanMode(mode) {
+    if (activeScanMode) {
+      showToast(`${scanModeLabel(activeScanMode)}正在执行，请稍后再试`, true);
+      return false;
+    }
+    activeScanMode = mode;
+    updateScanButtonsLocked();
+    return true;
+  }
+
+  function endScanMode(mode, force = false) {
+    if (!force && activeScanMode !== mode) return;
+    activeScanMode = '';
+    updateScanButtonsLocked();
+  }
+
   // ── Quick scan: show current DOM and immediately block checked users ──
   async function autoLoadAndScan() {
-    stopBackgroundLoad = true;
-    sweepInProgress = true;
-    applyHideAll(); // unhide articles so layout is stable during scrolling
-    const btn = document.getElementById('xfs-btn');
-    if (btn) { btn.disabled = true; btn.style.opacity = '0.4'; }
-    showPanel(scanPage(), {
-      autoBlock: true,
-      onBlockDone: () => {
-        sweepInProgress = false;
-        applyHideAll(); // re-apply hide state now that layout is stable
-        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.title = '当前视图垃圾号自动屏蔽'; }
-      },
-    });
+    if (!beginScanMode('content')) return;
+    try {
+      stopBackgroundLoad = true;
+      const btn = document.getElementById('xfs-btn');
+      showPanel(scanPage(), {
+        autoBlock: true,
+        refreshButtonIds: ['xfs-btn'],
+        onBlockDone: (stats) => {
+          endScanMode('content');
+          applyHideAll(); // preserve any existing hidden state after blocking
+          if (btn && (!stats || stats.done + stats.failed === 0)) {
+            btn.disabled = false;
+            btn.style.opacity = '';
+            btn.title = '当前视图内容垃圾号自动屏蔽';
+          }
+        },
+      });
+    } catch (e) {
+      endScanMode('content');
+      throw e;
+    }
   }
 
   // ── Sweep all: race to bottom first, then scan back up ───────────────
@@ -1561,9 +2390,10 @@
   //   scanning the visible DOM at each position. X.com re-renders tweets from
   //   memory as we scroll back into their range, so no extra network requests.
   async function sweepAll() {
+    if (!beginScanMode('sweep')) return;
+    try {
     stopBackgroundLoad = false;
-    sweepInProgress = true;
-    applyHideAll(); // unhide articles so layout is stable during scrolling
+    applyHideAll(); // preserve hidden state during scrolling
     const btn      = document.getElementById('xfs-btn');
     const sweepBtn = document.getElementById('xfs-sweep-btn');
     const MAX_DOWN = 60; // max scroll-down rounds to reach bottom
@@ -1621,14 +2451,16 @@
     }
 
     badge.remove();
-    sweepInProgress = false;
-    applyHideAll(); // re-apply hide state now that layout is stable
+    applyHideAll(); // keep hide state applied after scanning
     // Merge users found by the hide feature that React may have unloaded from the DOM
     mergeInto(Array.from(matchedUsersCache.values()));
-    showPanel(Array.from(acc.values()));
+    showPanel(Array.from(acc.values()), { refreshButtonIds: ['xfs-sweep-btn'] });
 
     if (btn)      { btn.disabled = false; btn.style.opacity = ''; }
     if (sweepBtn) { sweepBtn.disabled = false; sweepBtn.style.opacity = ''; }
+    } finally {
+      endScanMode('sweep');
+    }
   }
 
   // ── Sweep user list: likes / retweets / followers pages ─────────────
@@ -1636,6 +2468,8 @@
   // the panel for bulk blocking. Pure DOM — no private API calls needed,
   // so it survives X.com endpoint changes.
   async function sweepUserList() {
+    if (!beginScanMode('list')) return;
+    try {
     stopBackgroundLoad = false;
     const listBtn = document.getElementById('xfs-list-btn');
     const MAX_DOWN = 60;
@@ -1687,8 +2521,11 @@
     collectCells(); // final pass after last scroll
 
     badge.remove();
-    showPanel(Array.from(acc.values()));
+    showPanel(Array.from(acc.values()), { refreshButtonIds: ['xfs-list-btn'] });
     if (listBtn) { listBtn.disabled = false; listBtn.style.opacity = ''; }
+    } finally {
+      endScanMode('list');
+    }
   }
 
   // ── Floating icon buttons ────────────────────────────────────────────
@@ -1697,15 +2534,18 @@
   const LIST_SVG      = '👤';  // bulk block from likes/retweets/followers list
   const SCAN_SVG      = '🔍';  // targeted scan current page
   const SWEEP_SVG     = '⚡';  // sweep all replies
+  const DONE_SVG      = '✓';  // cleanup complete, click to reload
   const MUTE_SVG      = '🔇';  // mute selected word
   const EYE_SVG       = '👁';  // hide toggle; active state is shown by color/border
   const GEAR_SVG      = '⚙';  // low-frequency tools: keyword import/export
+  const COLLAPSE_SVG  = '-';  // collapse the right-side tool stack
+  const EXPAND_SVG    = 'XFS';  // restore the right-side tool stack
 
   // ── Hide helpers ─────────────────────────────────────────────────────
   function applyHideToArticle(art) {
     const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
     const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
-    const shouldHide = !sweepInProgress && (shouldHideMatched || shouldHideReferral);
+    const shouldHide = shouldHideMatched || shouldHideReferral;
     if (shouldHide && art.dataset.xfsHidden !== '1') {
       art.dataset.xfsHidden = '1';
       art.style.setProperty('max-height',    '2px',    'important');
@@ -1751,7 +2591,7 @@
     const isBlocked = btn.dataset.xfsState === 'blocked';
     const reason = buttonMatchedReason(btn);
     const isHot = reason !== '';
-    const color = reason === 'referral' ? C.referral : C.blockRed;
+    const color = reason === 'referral' ? C.referralHot : C.blockRed;
     btn.style.border = `1.5px solid ${isBlocked ? C.mute : (isHot ? color : C.btnBorder)}`;
     btn.style.color = isBlocked ? C.mute : (isHot ? color : C.sub);
     btn.style.boxShadow = !isBlocked && isHot ? `0 0 0 2px ${color}40` : '';
@@ -1790,29 +2630,37 @@
     updateReferralBadge();
   }
 
-  function scheduleReferralCheck(art, handle, isOP = false) {
+  function scheduleReferralCheck(art, handle, isOP = false, hintText = '') {
     if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
     const key = normalizeHandle(handle);
     if (!key || isOP) {
       art.dataset.xfsReferralAccount = '0';
+      art.dataset.xfsReferralQueued = '0';
       return;
     }
     art.dataset.xfsReferralHandle = key;
+    rememberReferralIntentHint(key, hintText || extractDisplayNameFromArticle(art, key));
+    const shouldForceRefresh = !!referralIntentHints.get(key) && !referralHintRefreshDone.has(key);
 
     const cached = cachedReferralAccount(key);
-    if (cached !== null) {
+    if (cached !== null && !(shouldForceRefresh && cached.isReferral === false)) {
       applyReferralAccountToArticles(key);
       return;
     }
-    if (!hideReferralActive) return;
+    if (!autoReferralDetectActive && !hideReferralActive && !youngAccountFilterActive) return;
+    if (art.dataset.xfsReferralQueued === '1') return;
+    art.dataset.xfsReferralQueued = '1';
 
-    fetchReferralAccount(handle)
-      .then(() => applyReferralAccountToArticles(key))
-      .catch(() => {
-        if (!referralWarned && hideReferralActive) {
-          referralWarned = true;
-          showToast('导流号查询失败：X API 暂不可用或限流', true);
-        }
+    fetchReferralAccount(handle, { forceRefresh: shouldForceRefresh })
+      .then(() => {
+        if (shouldForceRefresh) referralHintRefreshDone.add(key);
+        art.dataset.xfsReferralQueued = '0';
+        applyReferralAccountToArticles(key);
+      })
+      .catch(e => {
+        if (shouldForceRefresh && !isReferralRateLimitError(e)) referralHintRefreshDone.add(key);
+        art.dataset.xfsReferralQueued = '0';
+        if (hideReferralActive) warnReferralLookupFailure(e);
       });
   }
 
@@ -1821,29 +2669,50 @@
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (art === firstArt) return;
       const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
-      if (!handle) return;
-      scheduleReferralCheck(art, handle, false);
+      const key = normalizeHandle(handle);
+      if (!key || blockedHandles.has(key)) return;
+      scheduleReferralCheck(art, key, false);
     });
     updateReferralBadge();
   }
 
   async function scanReferralAccountsInView() {
+    if (!beginScanMode('referral')) return;
+    let handedOffToBlocker = false;
+    const progress = showProgressToast('导流号扫描已开始，正在读取当前回复...', C.referralHot);
+    try {
+    const domReferralHandles = captureReferralAccountsFromProfileDom(document);
     const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     const handles = [];
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (art === firstArt) return;
       const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
       const key = normalizeHandle(handle);
-      if (key && !handles.includes(key)) handles.push(key);
+      if (key) rememberReferralIntentHint(key, extractDisplayNameFromArticle(art, key));
+      if (key && !blockedHandles.has(key) && !handles.includes(key)) handles.push(key);
+    });
+    domReferralHandles.forEach(handle => {
+      const key = normalizeHandle(handle);
+      if (key && !blockedHandles.has(key) && !handles.includes(key)) handles.push(key);
     });
     if (handles.length === 0) {
-      showToast('当前视图没有可扫描的回复用户', true);
+      progress.update('当前视图没有可扫描的回复用户');
+      progress.close(1200);
       return;
     }
-    showToast(`正在检查导流号 ${handles.length} 个`, false);
-    for (const handle of handles) {
-      try { await fetchReferralAccount(handle); } catch (_) {}
+    progress.update(`正在搜索导流号 0/${handles.length}`);
+    let lookupError = null;
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i];
+      progress.update(`正在搜索导流号 ${i + 1}/${handles.length}`);
+      try {
+        await fetchReferralAccount(handle, { forceRefresh: true });
+      } catch (e) {
+        lookupError = lookupError || e;
+        if (isReferralRateLimitError(e)) break;
+      }
     }
+    captureReferralAccountsFromProfileDom(document);
     applyReferralForVisible();
     const users = handles
       .map(handle => {
@@ -1854,17 +2723,34 @@
           cats: new Set(['referral']),
           heartHits: [],
           nameKwHits: [],
-          kwHits: [{ kw: '导流号', snippet: item.urls?.[0] || 'profile x.com link' }],
+          kwHits: [{ kw: item.isYoungAccount && !item.isLinkReferral ? '新号' : '导流号', snippet: referralItemDescription(item) }],
           reHits: [],
-          tweetSnippet: item.urls?.[0] || '',
+          tweetSnippet: referralItemDescription(item),
         } : null;
       })
       .filter(Boolean);
     if (users.length === 0) {
-      showToast('当前视图未发现导流号', false);
+      if (lookupError) {
+        progress.update('导流号搜索受限，请稍后再试');
+        progress.close(1600);
+        warnReferralLookupFailure(lookupError);
+      } else {
+        progress.update('搜索完成，未发现导流号');
+        progress.close(1200);
+      }
       return;
     }
-    showPanel(users);
+    progress.update(`发现 ${users.length} 个导流号，正在自动屏蔽...`);
+    progress.close(900);
+    handedOffToBlocker = true;
+    showPanel(users, {
+      autoBlock: true,
+      refreshButtonIds: ['xfs-referral-scan-btn'],
+      onBlockDone: () => endScanMode('referral'),
+    });
+    } finally {
+      if (!handedOffToBlocker) endScanMode('referral');
+    }
   }
 
   function updateHideBadge() {
@@ -1883,13 +2769,64 @@
     badge.style.display = n > 0 ? 'flex' : 'none';
   }
 
+  const TOOLBAR_DEFAULT_RIGHT = 18;
+  const TOOLBAR_BASE_BOTTOM = 160;
+
+  function clampToolbarPosition() {
+    const maxRight = Math.max(8, window.innerWidth - 44);
+    toolbarRight = Math.min(Math.max(8, Number(toolbarRight) || TOOLBAR_DEFAULT_RIGHT), maxRight);
+    const maxBottom = Math.max(24, window.innerHeight - 292);
+    toolbarBaseBottom = Math.min(Math.max(24, Number(toolbarBaseBottom) || TOOLBAR_BASE_BOTTOM), maxBottom);
+  }
+
+  function toolbarRightPx(delta = 0) {
+    clampToolbarPosition();
+    return `${toolbarRight + delta}px`;
+  }
+
+  function toolbarBottomPx(bottom) {
+    clampToolbarPosition();
+    return `${toolbarBaseBottom + (bottom - TOOLBAR_BASE_BOTTOM)}px`;
+  }
+
+  function setToolbarPosition(el, bottom, rightDelta = 0) {
+    if (!el) return;
+    el.style.right = toolbarRightPx(rightDelta);
+    el.style.bottom = toolbarBottomPx(bottom);
+  }
+
+  function updateToolbarPositions() {
+    [
+      ['xfs-stack-toggle-btn', 160, 0],
+      ['xfs-gear-btn', 200, 0],
+      ['xfs-referral-scan-btn', 240, 0],
+      ['xfs-referral-btn', 280, 0],
+      ['xfs-sweep-btn', 320, 0],
+      ['xfs-btn', 360, 0],
+      ['xfs-hide-btn', 400, 0],
+      ['xfs-btn-backdrop', 196, -4],
+      ['xfs-btn-section-settings', 200, -2],
+      ['xfs-btn-section-referral', 236, -2],
+      ['xfs-btn-section-content', 316, -2],
+      ['xfs-btn-sep-1', 302, 2],
+      ['xfs-btn-sep-2', 226, 2],
+      ['xfs-tools-panel', 166, 40],
+    ].forEach(([id, bottom, rightDelta]) => setToolbarPosition(document.getElementById(id), bottom, rightDelta));
+  }
+
+  function saveToolbarPosition() {
+    clampToolbarPosition();
+    GM_setValue('toolbar_right', toolbarRight);
+    GM_setValue('toolbar_base_bottom', toolbarBaseBottom);
+  }
+
   function mkIconBtn(id, svg, title, bottom, color, onclick) {
     const b = document.createElement('button');
     b.id = id;
     b.textContent = svg;
     b.title = title;
     b.style.cssText = [
-      'position:fixed', `bottom:${bottom}px`, 'right:18px',
+      'position:fixed', `bottom:${toolbarBottomPx(bottom)}`, `right:${toolbarRightPx()}`,
       'width:32px', 'height:32px', 'border-radius:50%',
       'background:rgba(255,255,255,0.92)',
       'backdrop-filter:blur(4px)', '-webkit-backdrop-filter:blur(4px)',
@@ -1908,6 +2845,22 @@
     return b;
   }
 
+  function markCleanupButtonsComplete(ids = ['xfs-btn', 'xfs-sweep-btn', 'xfs-referral-scan-btn', 'xfs-list-btn']) {
+    ids.forEach(id => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      b.disabled = false;
+      b.style.opacity = '';
+      b.style.pointerEvents = '';
+      b.textContent = DONE_SVG;
+      b.title = '清理完成，点击刷新页面';
+      b.style.border = `2px solid ${C.mute}`;
+      b.style.color = C.mute;
+      b.style.background = `${C.mute}18`;
+      b.onclick = () => location.reload();
+    });
+  }
+
   function closeToolsPanel() {
     document.getElementById('xfs-tools-panel')?.remove();
   }
@@ -1918,9 +2871,12 @@
       '',
       '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
       '',
-      '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
+      '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
+      '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角屏蔽按钮会变橙色。',
       '',
-      '两类账号都可以隐藏；扫描按钮会打开确认面板，再手动屏蔽。',
+      '新注册账号辅助规则：默认关闭。开启后，会在导流号 profile 查询时顺手检查注册时间，并把少于所选天数或晚于所选日期注册的账号也标成橙色。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，实际收益有限，而且新号不一定是垃圾号，误伤风险较高。',
+      '',
+      '内容扫描按钮会打开确认面板；导流扫描按钮会直接屏蔽当前视图命中的导流号。',
     ].join('\n'));
   }
 
@@ -1929,7 +2885,7 @@
     const p = document.createElement('div');
     p.id = 'xfs-tools-panel';
     p.style.cssText = [
-      'position:fixed', 'right:58px', 'bottom:166px',
+      'position:fixed', `right:${toolbarRightPx(40)}`, `bottom:${toolbarBottomPx(166)}`,
       'width:176px', 'padding:8px',
       'background:rgba(255,255,255,0.96)',
       'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
@@ -1943,7 +2899,7 @@
     ].join(';');
 
     const title = document.createElement('div');
-    title.textContent = '关键词工具';
+    title.textContent = '设置 / 工具';
     title.style.cssText = `font-size:12px;font-weight:700;color:${C.sub};padding:0 2px 2px;`;
     p.appendChild(title);
 
@@ -1955,6 +2911,122 @@
       return b;
     }
 
+    function refreshYoungAccountControls() {
+      youngAccountBtn.textContent = `新注册辅助：${youngAccountFilterActive ? '开' : '关'}`;
+      youngAccountBtn.style.borderColor = youngAccountFilterActive ? C.blockRed : C.btnBorder;
+      youngAccountBtn.style.color = youngAccountFilterActive ? C.blockRed : C.sub;
+      youngAccountBtn.style.background = youngAccountFilterActive ? '#fff1f1' : '#fff';
+      youngModeSelect.value = youngAccountCutoffMode;
+      youngAccountSelect.value = String(youngAccountMaxAgeDays);
+      youngDateInput.value = youngAccountCutoffDate;
+      youngAccountSelect.style.display = youngAccountCutoffMode === 'days' ? '' : 'none';
+      youngDateInput.style.display = youngAccountCutoffMode === 'date' ? '' : 'none';
+      youngRowText.textContent = youngAccountCutoffMode === 'date' ? '晚于' : '少于';
+    }
+
+    const autoReferralBtn = mkToolBtn('', () => {
+      autoReferralDetectActive = !autoReferralDetectActive;
+      GM_setValue('auto_referral_detect', autoReferralDetectActive);
+      autoReferralBtn.textContent = `自动检测导流号：${autoReferralDetectActive ? '开' : '关'}`;
+      autoReferralBtn.style.borderColor = autoReferralDetectActive ? C.referralHot : C.btnBorder;
+      autoReferralBtn.style.color = autoReferralDetectActive ? C.referralHot : C.sub;
+      autoReferralBtn.style.background = autoReferralDetectActive ? '#fff8ed' : '#fff';
+      if (autoReferralDetectActive) applyReferralForVisible();
+      showToast(autoReferralDetectActive ? '自动检测导流号已开启' : '自动检测导流号已关闭', false);
+    });
+    autoReferralBtn.textContent = `自动检测导流号：${autoReferralDetectActive ? '开' : '关'}`;
+    autoReferralBtn.style.borderColor = autoReferralDetectActive ? C.referralHot : C.btnBorder;
+    autoReferralBtn.style.color = autoReferralDetectActive ? C.referralHot : C.sub;
+    autoReferralBtn.style.background = autoReferralDetectActive ? '#fff8ed' : '#fff';
+
+    const youngWrap = document.createElement('div');
+    youngWrap.style.cssText = `border:1px solid ${C.blockRed};background:#fff7f7;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
+    const youngTitle = document.createElement('div');
+    youngTitle.textContent = '高误伤：新注册账号辅助规则';
+    youngTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.blockRed};`;
+    const youngNote = document.createElement('div');
+    youngNote.textContent = '默认关闭。需要逐个查 profile，速度慢，容易限流；新号不一定是垃圾号。';
+    youngNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
+    const youngAccountBtn = mkToolBtn('', () => {
+      youngAccountFilterActive = !youngAccountFilterActive;
+      GM_setValue('young_account_filter_active', youngAccountFilterActive);
+      refreshYoungAccountControls();
+      if (youngAccountFilterActive) applyReferralForVisible();
+      showToast(youngAccountFilterActive ? `新注册辅助已开启：${youngAccountRuleLabel()}` : '新注册辅助已关闭', false);
+    });
+    const youngRow = document.createElement('label');
+    youngRow.style.cssText = `display:flex;align-items:center;gap:6px;font-size:11px;color:${C.text};`;
+    const youngModeSelect = document.createElement('select');
+    youngModeSelect.style.cssText = `width:100%;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px;`;
+    [
+      ['days', '按天数'],
+      ['date', '按日期'],
+    ].forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      youngModeSelect.appendChild(opt);
+    });
+    youngModeSelect.onchange = () => {
+      youngAccountCutoffMode = normalizeYoungAccountCutoffMode(youngModeSelect.value);
+      GM_setValue('young_account_cutoff_mode', youngAccountCutoffMode);
+      referralCache.forEach((item, key) => {
+        const effective = materializeReferralItem(item);
+        referralCache.set(key, { ...item, isReferral: effective.isReferral, isYoungAccount: effective.isYoungAccount, accountAgeDays: effective.accountAgeDays });
+      });
+      saveReferralCache();
+      applyReferralForVisible();
+      refreshYoungAccountControls();
+      showToast(`新注册辅助已切换为${youngAccountCutoffMode === 'date' ? '按日期' : '按天数'}`, false);
+    };
+    const youngAccountSelect = document.createElement('select');
+    youngAccountSelect.style.cssText = `flex:1;min-width:0;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px;`;
+    YOUNG_ACCOUNT_DAY_OPTIONS.forEach(days => {
+      const opt = document.createElement('option');
+      opt.value = String(days);
+      opt.textContent = `${days} 天`;
+      youngAccountSelect.appendChild(opt);
+    });
+    const youngDateInput = document.createElement('input');
+    youngDateInput.type = 'date';
+    youngDateInput.max = toDateInputValue(new Date());
+    youngDateInput.style.cssText = `flex:1;min-width:0;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px;`;
+    youngAccountSelect.onchange = () => {
+      youngAccountMaxAgeDays = normalizeYoungAccountDays(youngAccountSelect.value);
+      GM_setValue('young_account_max_age_days', youngAccountMaxAgeDays);
+      referralCache.forEach((item, key) => {
+        const effective = materializeReferralItem(item);
+        referralCache.set(key, { ...item, isReferral: effective.isReferral, isYoungAccount: effective.isYoungAccount, accountAgeDays: effective.accountAgeDays });
+      });
+      saveReferralCache();
+      applyReferralForVisible();
+      refreshYoungAccountControls();
+      showToast(`新号阈值已设为 ${youngAccountMaxAgeDays} 天`, false);
+    };
+    youngDateInput.onchange = () => {
+      youngAccountCutoffDate = normalizeDateInputValue(youngDateInput.value);
+      GM_setValue('young_account_cutoff_date', youngAccountCutoffDate);
+      referralCache.forEach((item, key) => {
+        const effective = materializeReferralItem(item);
+        referralCache.set(key, { ...item, isReferral: effective.isReferral, isYoungAccount: effective.isYoungAccount, accountAgeDays: effective.accountAgeDays });
+      });
+      saveReferralCache();
+      applyReferralForVisible();
+      refreshYoungAccountControls();
+      showToast(`新号日期已设为 ${youngAccountCutoffDate}`, false);
+    };
+    const youngRowText = document.createElement('span');
+    youngRowText.textContent = '少于';
+    youngRow.appendChild(youngRowText);
+    youngRow.appendChild(youngAccountSelect);
+    youngRow.appendChild(youngDateInput);
+    youngWrap.appendChild(youngTitle);
+    youngWrap.appendChild(youngAccountBtn);
+    youngWrap.appendChild(youngModeSelect);
+    youngWrap.appendChild(youngRow);
+    youngWrap.appendChild(youngNote);
+    refreshYoungAccountControls();
+
     const editBtn = mkToolBtn('编辑关键词/正则', () => {
       closeToolsPanel();
       showPanel(scanPage(), { keywordsOpen: true });
@@ -1963,6 +3035,8 @@
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
     p.appendChild(editBtn);
+    p.appendChild(autoReferralBtn);
+    p.appendChild(youngWrap);
     p.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
     p.appendChild(mkToolBtn('导出自定义词', exportKws));
     p.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
@@ -2031,16 +3105,21 @@
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
 
-      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
+      const allowFilterHighlight = location.pathname !== '/home';
+      const matchInfo = allowFilterHighlight
+        ? matchesFilters(displayName, fullText)
+        : { matched: false, cats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [] };
+      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchInfo;
+      const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
       const isOP = art === firstArt;
-      art.dataset.xfsHideMatched = (!isOP && matched) ? '1' : '0';
-      scheduleReferralCheck(art, handle, isOP);
-      if (!isOP && matched && /\/status\/\d/.test(location.pathname)) {
+      art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
+      if (alreadyBlocked) art.dataset.xfsReferralAccount = '0';
+      else scheduleReferralCheck(art, handle, isOP, displayName);
+      if (!isOP && matched && !alreadyBlocked && /\/status\/\d/.test(location.pathname)) {
         matchedHandlesInView.add(handle);
         if (!matchedUsersCache.has(handle))
           matchedUsersCache.set(handle, { handle, displayName, cats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], tweetSnippet: '' });
       }
-      const alreadyBlocked = blockedHandles.has(handle);
 
       if (alreadyBlocked) {
         for (const a of nameEl.querySelectorAll('a')) {
@@ -2097,7 +3176,7 @@
         if (btn.disabled) return;
         const isBlocked = btn.dataset.xfsState === 'blocked';
         const reason = buttonMatchedReason(btn);
-        const color = reason === 'referral' ? C.referral : C.blockRed;
+        const color = reason === 'referral' ? C.referralHot : C.blockRed;
         btn.style.background = isBlocked ? `${C.suspect}20` : (reason ? `${color}18` : `${C.sub}12`);
         btn.style.transform  = 'scale(1.18)';
       };
@@ -2118,6 +3197,7 @@
           try {
             await unblockUser(handle, csrf);
             blockedHandles.delete(handle);
+            blockedHandles.delete(normalizeHandle(handle));
             undimArticlesByHandle(handle);
             showToast(`@${handle} 已取消屏蔽`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
@@ -2135,7 +3215,14 @@
           try {
             await blockUserCoordinated(handle, csrf);
             blockedHandles.add(handle);
+            blockedHandles.add(normalizeHandle(handle));
+            matchedHandlesInView.delete(handle);
+            matchedHandlesInView.delete(normalizeHandle(handle));
+            matchedUsersCache.delete(handle);
+            matchedUsersCache.delete(normalizeHandle(handle));
             dimArticlesByHandle(handle);
+            updateHideBadge();
+            updateReferralBadge();
             showToast(`@${handle} 已屏蔽`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               b.dataset.xfsState = 'blocked';
@@ -2185,7 +3272,7 @@
       const bd = document.createElement('div');
       bd.id = 'xfs-btn-backdrop';
       bd.style.cssText = [
-        'position:fixed', 'right:14px', 'bottom:196px',
+        'position:fixed', `right:${toolbarRightPx(-4)}`, `bottom:${toolbarBottomPx(196)}`,
         'width:40px', 'height:240px',
         'background:rgba(255,255,255,0.82)',
         'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
@@ -2207,7 +3294,7 @@
       const el = document.createElement('div');
       el.id = `xfs-btn-section-${section.id}`;
       el.style.cssText = [
-        'position:fixed', 'right:16px', `bottom:${section.bottom}px`,
+        'position:fixed', `right:${toolbarRightPx(-2)}`, `bottom:${toolbarBottomPx(section.bottom)}`,
         'width:36px', `height:${section.height}px`,
         `background:${section.background}`,
         'border-radius:18px',
@@ -2222,7 +3309,7 @@
       const sep = document.createElement('div');
       sep.id = `xfs-btn-sep-${i + 1}`;
       sep.style.cssText = [
-        'position:fixed', 'right:20px', `bottom:${bottom}px`,
+        'position:fixed', `right:${toolbarRightPx(2)}`, `bottom:${toolbarBottomPx(bottom)}`,
         'width:28px', 'height:2px',
         `background:${C.btnBorder}`,
         'opacity:0.9',
@@ -2239,17 +3326,143 @@
     document.querySelectorAll('[id^="xfs-btn-section-"],[id^="xfs-btn-sep-"]').forEach(el => el.remove());
   }
 
+  function toggleButtonStack() {
+    buttonsCollapsed = !buttonsCollapsed;
+    GM_setValue('buttons_collapsed', buttonsCollapsed);
+    closeToolsPanel();
+    if (buttonsCollapsed) {
+      removeBtnStack();
+    } else {
+      injectBtn();
+    }
+    updateStackToggleBtn();
+    updateToolbarPositions();
+  }
+
+  function enableToolbarDrag(btn) {
+    let drag = null;
+    btn.onpointerdown = e => {
+      if (e.button !== 0) return;
+      clampToolbarPosition();
+      drag = {
+        x: e.clientX,
+        y: e.clientY,
+        right: toolbarRight,
+        bottom: toolbarBaseBottom,
+        moved: false,
+      };
+      try { btn.setPointerCapture?.(e.pointerId); } catch (_) {}
+    };
+    btn.onpointermove = e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      toolbarRight = drag.right - dx;
+      toolbarBaseBottom = drag.bottom - dy;
+      clampToolbarPosition();
+      updateToolbarPositions();
+      e.preventDefault();
+    };
+    const endDrag = e => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      try { btn.releasePointerCapture?.(e.pointerId); } catch (_) {}
+      if (moved) {
+        btn.dataset.xfsDragged = '1';
+        saveToolbarPosition();
+        setTimeout(() => {
+          if (btn.dataset.xfsDragged === '1') btn.dataset.xfsDragged = '0';
+        }, 250);
+        e.preventDefault();
+      }
+    };
+    btn.onpointerup = endDrag;
+    btn.onpointercancel = endDrag;
+  }
+
+  function injectStackToggleBtn() {
+    if (!document.body) return;
+    let btn = document.getElementById('xfs-stack-toggle-btn');
+    if (!btn) {
+      btn = mkIconBtn('xfs-stack-toggle-btn', buttonsCollapsed ? EXPAND_SVG : COLLAPSE_SVG, '', 160, C.sub, e => {
+        if (btn.dataset.xfsDragged === '1') {
+          btn.dataset.xfsDragged = '0';
+          e?.preventDefault?.();
+          return;
+        }
+        toggleButtonStack();
+      });
+      btn.style.touchAction = 'none';
+      btn.onmouseenter = () => {
+        if (btn.disabled) return;
+        btn.style.opacity = '1';
+        btn.style.transform = buttonsCollapsed ? 'translateX(-1px)' : 'scale(1.06)';
+        btn.style.boxShadow = buttonsCollapsed ? '0 4px 16px rgba(83,100,113,0.24)' : '0 2px 10px rgba(0,0,0,0.14)';
+      };
+      btn.onmouseleave = () => {
+        btn.style.transform = '';
+        updateStackToggleBtn();
+      };
+      enableToolbarDrag(btn);
+      document.body.appendChild(btn);
+    }
+    updateStackToggleBtn();
+    updateToolbarPositions();
+  }
+
+  function updateStackToggleBtn() {
+    const btn = document.getElementById('xfs-stack-toggle-btn');
+    if (!btn) return;
+    const collapsed = buttonsCollapsed;
+    btn.textContent = collapsed ? EXPAND_SVG : COLLAPSE_SVG;
+    btn.title = collapsed ? 'X Fraud Scanner · 已收起，点击展开右侧工具栏；拖动可移动' : 'X Fraud Scanner · 收起右侧工具栏；拖动可移动';
+    btn.style.width = collapsed ? '46px' : '32px';
+    btn.style.height = collapsed ? '30px' : '32px';
+    btn.style.borderRadius = collapsed ? '15px' : '50%';
+    btn.style.opacity = collapsed ? '0.92' : '0.58';
+    btn.style.background = collapsed ? 'rgba(255,255,255,0.94)' : 'rgba(255,255,255,0.76)';
+    btn.style.border = collapsed ? `1.5px solid ${C.sub}` : `1.5px solid ${C.btnBorder}`;
+    btn.style.boxShadow = collapsed ? '0 3px 12px rgba(83,100,113,0.18)' : '0 1px 6px rgba(0,0,0,0.10)';
+    btn.style.fontFamily = 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+    btn.style.fontSize = collapsed ? '11px' : '18px';
+    btn.style.fontWeight = collapsed ? '800' : '700';
+    btn.style.letterSpacing = '0';
+    btn.style.color = C.sub;
+  }
+
+  function removeStackToggleBtn() {
+    document.getElementById('xfs-stack-toggle-btn')?.remove();
+  }
+
+  function removeBtnStack() {
+    document.getElementById('xfs-btn')?.remove();
+    document.getElementById('xfs-referral-scan-btn')?.remove();
+    document.getElementById('xfs-sweep-btn')?.remove();
+    removeGearBtn();
+    removeReferralBtn();
+    removeHideBtn();
+    removeBtnBackdrop();
+  }
+
   function injectBtn() {
     if (!document.body) return;
     if (!/\/status\/\d/.test(location.pathname)) return;
     if (isListPage()) return; // likes/retweets/followers use their own button
+    injectStackToggleBtn();
+    if (buttonsCollapsed) {
+      removeBtnStack();
+      return;
+    }
     injectHideBtn();
     injectBtnBackdrop();
     injectReferralBtn();
     injectGearBtn();
     if (!document.getElementById('xfs-referral-scan-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-referral-scan-btn', SCAN_SVG, '扫描当前视图导流号并打开确认面板；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
+        'xfs-referral-scan-btn', SCAN_SVG, '扫描并自动屏蔽当前视图导流号；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
     }
     if (!document.getElementById('xfs-btn')) {
       document.body.appendChild(mkIconBtn(
@@ -2269,16 +3482,13 @@
           }
         }));
     }
+    updateToolbarPositions();
+    updateScanButtonsLocked();
   }
 
   function removeBtn() {
-    document.getElementById('xfs-btn')?.remove();
-    document.getElementById('xfs-referral-scan-btn')?.remove();
-    document.getElementById('xfs-sweep-btn')?.remove();
-    removeGearBtn();
-    removeReferralBtn();
-    removeHideBtn();
-    removeBtnBackdrop();
+    removeBtnStack();
+    removeStackToggleBtn();
   }
 
   // ── Likes / retweets / followers page button ─────────────────────────
@@ -2292,6 +3502,7 @@
                 : '批量屏蔽关注者';
     document.body.appendChild(
       mkIconBtn('xfs-list-btn', LIST_SVG, label, 200, C.mute, sweepUserList));
+    updateScanButtonsLocked();
   }
 
   function removeListBtn() {
@@ -2299,7 +3510,7 @@
   }
 
   // ── Referral-account hide toggle button ──────────────────────────────
-  // Defaults on. Hides replies from accounts whose profile links to x.com handles.
+  // Defaults on. Hides replies from accounts that match profile referral rules.
   function updateReferralBtn() {
     const btn = document.getElementById('xfs-referral-btn');
     if (!btn) return;
@@ -2307,8 +3518,8 @@
     btn.textContent = EYE_SVG;
     if (badge) btn.appendChild(badge);
     btn.title = hideReferralActive
-      ? '导流号回复已隐藏，点击显示。受平台接口/限速影响，识别会稍有延迟'
-      : '点击隐藏 profile 含 x.com 链接的导流号回复。只检查已加载回复，识别会稍有延迟';
+      ? '导流号回复已隐藏（橙标），点击显示。受平台接口/限速影响，识别会稍有延迟'
+      : '点击隐藏 profile 导流号回复（橙标）。只检查已加载回复，识别会稍有延迟';
     btn.style.background = hideReferralActive ? 'rgba(95,111,137,0.14)' : 'rgba(255,255,255,0.92)';
     btn.style.border = hideReferralActive ? `2px solid ${C.referral}` : `2px dashed ${C.btnBorder}`;
     btn.style.color = hideReferralActive ? C.referral : C.sub;
@@ -2368,8 +3579,8 @@
     btn.textContent = EYE_SVG;
     if (badge) btn.appendChild(badge);
     btn.title = hideMatchedActive
-      ? '内容垃圾号回复已隐藏，点击显示'
-      : '点击隐藏匹配关键词/正则的内容垃圾号回复';
+      ? '内容垃圾号回复已隐藏（红标），点击显示'
+      : '点击隐藏匹配关键词/正则的内容垃圾号回复（红标）';
     btn.style.background = hideMatchedActive ? 'rgba(244,33,46,0.10)' : 'rgba(255,255,255,0.92)';
     btn.style.border = hideMatchedActive ? `2px solid ${C.blockRed}` : `2px dashed ${C.btnBorder}`;
     btn.style.color = hideMatchedActive ? C.blockRed : C.sub;
@@ -2456,7 +3667,9 @@
   function routeButtonsReady() {
     const p = location.pathname;
     const ids = isListPage(p) ? ['xfs-list-btn']
-              : /\/status\/\d/.test(p) ? ['xfs-btn-backdrop', 'xfs-hide-btn', 'xfs-referral-btn', 'xfs-btn', 'xfs-referral-scan-btn', 'xfs-sweep-btn', 'xfs-gear-btn']
+              : /\/status\/\d/.test(p) ? (buttonsCollapsed
+                ? ['xfs-stack-toggle-btn']
+                : ['xfs-stack-toggle-btn', 'xfs-btn-backdrop', 'xfs-hide-btn', 'xfs-referral-btn', 'xfs-btn', 'xfs-referral-scan-btn', 'xfs-sweep-btn', 'xfs-gear-btn'])
               : p === '/home' ? ['xfs-mute-btn'] : [];
     return ids.every(id => document.getElementById(id));
   }
@@ -2474,6 +3687,7 @@
     let lastPath = location.pathname;
     let ibtnTimer = null;
     let profileTimer = null;
+    let routeBtnTimer = null;
     let watchdogTimer = null;
 
     function startButtonWatchdog(duration = 30000, interval = 500) {
@@ -2481,7 +3695,7 @@
       const until = Date.now() + duration;
       const tick = () => {
         ensureRouteButtons();
-        if (Date.now() < until || !routeButtonsReady()) {
+        if (Date.now() < until && !routeButtonsReady()) {
           watchdogTimer = setTimeout(tick, interval);
         }
       };
@@ -2503,8 +3717,11 @@
       if (cur === lastPath) return;
       lastPath = cur;
       sweepHasRun = false;
+      endScanMode(activeScanMode, true);
       matchedHandlesInView.clear();
       matchedUsersCache.clear();
+      referralIntentHints.clear();
+      referralHintRefreshDone.clear();
       removeBtn();
       removeListBtn();
       removeMuteBtn();
@@ -2525,7 +3742,8 @@
       profileTimer = setTimeout(captureReferralAccountsFromProfileDom, 250);
 
       // Fallback: re-inject main buttons if DOM settled before the nav timer fired.
-      ensureRouteButtons();
+      clearTimeout(routeBtnTimer);
+      routeBtnTimer = setTimeout(ensureRouteButtons, 300);
     });
     observer.observe(document.body, { childList: true, subtree: true });
     // Initial inject on page load
@@ -2545,6 +3763,7 @@
     });
   }
 
+  exposeDebugTools();
   startUI();
   document.addEventListener('DOMContentLoaded', startUI);
   window.addEventListener('load', startUI);
