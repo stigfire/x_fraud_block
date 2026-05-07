@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.48
+// @version      5.52
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       Anthony
 // @license MIT
@@ -245,6 +245,7 @@
   let toolbarRight = GM_getValue('toolbar_right', 18);
   let toolbarBaseBottom = GM_getValue('toolbar_base_bottom', 160);
   let activeScanMode = '';
+  let persistentBlockedCount = Math.max(0, parseInt(GM_getValue('persistent_blocked_count', 0), 10) || 0);
   let userLookupQueryId = GM_getValue('user_lookup_query_id', DEFAULT_USER_LOOKUP_QUERY_ID);
   let capturedApiHeaders = null;
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
@@ -1653,6 +1654,12 @@
     badge.textContent = overflow > 0 ? `${topUsers.length}/${allUsers.length}，还有 ${overflow} 个` : `${topUsers.length} 个`;
     badge.style.cssText = `font-size:11px;color:${overflow > 0 ? C.blockRed : C.sub};`;
 
+    const countBadge = document.createElement('span');
+    countBadge.className = 'xfs-persistent-blocked-count';
+    countBadge.textContent = `累计 ${formatBlockedCount(persistentBlockedCount)}`;
+    countBadge.title = '仅供参考：这是 XFS 脚本累计成功屏蔽数，不是 X 平台全部已屏蔽账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
+    countBadge.style.cssText = `font-size:10px;color:${C.mute};background:${C.mute}12;border:1px solid ${C.mute}55;border-radius:999px;padding:1px 6px;white-space:nowrap;`;
+
     const authDot = document.createElement('span');
     authDot.title = liveBearer ? 'Auth token captured from page' : 'Using fallback token';
     authDot.textContent = liveBearer ? 'auth ok' : 'auth?';
@@ -1670,6 +1677,7 @@
 
     hdr.appendChild(title);
     hdr.appendChild(badge);
+    hdr.appendChild(countBadge);
     hdr.appendChild(authDot);
     hdr.appendChild(dockBtn);
     hdr.appendChild(closeBtn);
@@ -2162,6 +2170,7 @@
               continue;
             }
             done++;
+            incrementPersistentBlockedCount(1);
             blockedHandles.add(handle);
             blockedHandles.add(normalizeHandle(handle));
             matchedHandlesInView.delete(handle);
@@ -2233,6 +2242,14 @@
     gfLink.style.cssText = `color:${C.sub};text-decoration:underline;`;
     scriptFtr.appendChild(verSpan);
     scriptFtr.appendChild(gfLink);
+    scriptFtr.appendChild(document.createTextNode(' · '));
+    const xBlockedLink = document.createElement('a');
+    xBlockedLink.textContent = 'X 已屏蔽账号';
+    xBlockedLink.href = 'https://x.com/settings/blocked/all';
+    xBlockedLink.target = '_blank';
+    xBlockedLink.rel = 'noopener noreferrer';
+    xBlockedLink.style.cssText = `color:${C.sub};text-decoration:underline;`;
+    scriptFtr.appendChild(xBlockedLink);
 
     panel.appendChild(hdr);
     panel.appendChild(kwBar);
@@ -2769,6 +2786,25 @@
     badge.style.display = n > 0 ? 'flex' : 'none';
   }
 
+  function formatBlockedCount(n) {
+    return Number(n || 0).toLocaleString('en-US');
+  }
+
+  function updatePersistentBlockedBadge() {
+    document.querySelectorAll('.xfs-persistent-blocked-count').forEach(badge => {
+      badge.textContent = `累计 ${formatBlockedCount(persistentBlockedCount)}`;
+      badge.title = '仅供参考：这是 XFS 脚本累计成功屏蔽数，不是 X 平台全部已屏蔽账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
+    });
+  }
+
+  function incrementPersistentBlockedCount(n = 1) {
+    const inc = Math.max(0, parseInt(n, 10) || 0);
+    if (!inc) return;
+    persistentBlockedCount += inc;
+    GM_setValue('persistent_blocked_count', persistentBlockedCount);
+    updatePersistentBlockedBadge();
+  }
+
   const TOOLBAR_DEFAULT_RIGHT = 18;
   const TOOLBAR_BASE_BOTTOM = 160;
 
@@ -3027,13 +3063,14 @@
     youngWrap.appendChild(youngNote);
     refreshYoungAccountControls();
 
-    const editBtn = mkToolBtn('编辑关键词/正则', () => {
+    const editBtn = mkToolBtn('关键词定义', () => {
       closeToolsPanel();
       showPanel(scanPage(), { keywordsOpen: true });
     });
     editBtn.style.borderColor = C.regexKw;
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
+    editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
     p.appendChild(editBtn);
     p.appendChild(autoReferralBtn);
     p.appendChild(youngWrap);
@@ -3056,7 +3093,7 @@
   function injectGearBtn() {
     if (!document.body) return;
     if (document.getElementById('xfs-gear-btn')) return;
-    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '自定义关键词/正则工具', 200, C.sub, e => {
+    const btn = mkIconBtn('xfs-gear-btn', GEAR_SVG, '设置 / 关键词定义', 200, C.sub, e => {
       e?.preventDefault?.();
       e?.stopPropagation?.();
       if (document.getElementById('xfs-tools-panel')) closeToolsPanel();
@@ -3214,6 +3251,7 @@
         } else {
           try {
             await blockUserCoordinated(handle, csrf);
+            incrementPersistentBlockedCount(1);
             blockedHandles.add(handle);
             blockedHandles.add(normalizeHandle(handle));
             matchedHandlesInView.delete(handle);
