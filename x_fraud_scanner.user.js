@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.65
+// @version      5.66
 // @description  扫描推文回复中的垃圾用户批量屏蔽
-// @author       Anthony
+// @author       summeriscoming
 // @license MIT
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzEiIGZpbGw9IiNmNDIxMmUiLz48Y2lyY2xlIGN4PSIyNyIgY3k9IjI3IiByPSIxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIvPjxsaW5lIHgxPSIzNSIgeTE9IjM1IiB4Mj0iNDgiIHkyPSI0OCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjIxIiB5MT0iMjciIHgyPSIzMyIgeTI9IjI3IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48bGluZSB4MT0iMjciIHkxPSIyMSIgeDI9IjI3IiB5Mj0iMzMiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==
 // @match        https://twitter.com/*
@@ -1797,6 +1797,22 @@
     });
   }
 
+  function shouldHideBlockedArticles() {
+    return hideMatchedActive || hideReferralActive;
+  }
+
+  function applyBlockedArticleStyle(art) {
+    if (!art || shouldHideBlockedArticles()) return;
+    art.style.transition = 'opacity 0.3s';
+    art.style.setProperty('opacity', '0.4', 'important');
+  }
+
+  function clearBlockedArticleStyle(art) {
+    if (!art) return;
+    art.style.removeProperty('opacity');
+    art.style.removeProperty('transition');
+  }
+
   // ── Visual feedback: dim articles belonging to a blocked handle ──────
   function dimArticlesByHandle(handle) {
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
@@ -1807,6 +1823,7 @@
         if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
       }
       if (!isMatch) return;
+      art.dataset.xfsBlocked = '1';
       art.dataset.xfsHideMatched = '0';
       art.dataset.xfsReferralAccount = '0';
       // Strikethrough on the display name anchor (not the @handle).
@@ -1818,9 +1835,9 @@
           break;
         }
       }
-      // Fade the entire article
-      art.style.transition = 'opacity 0.3s';
-      art.style.setProperty('opacity', '0.4', 'important');
+      clearBlockedArticleStyle(art);
+      if (shouldHideBlockedArticles()) applyHideToArticle(art);
+      else applyBlockedArticleStyle(art);
     });
   }
 
@@ -1833,12 +1850,13 @@
         if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
       }
       if (!isMatch) return;
+      delete art.dataset.xfsBlocked;
       for (const a of nameEl.querySelectorAll('a')) {
         const txt = getTextWithEmoji(a).trim();
         if (txt && !txt.startsWith('@')) { a.style.removeProperty('text-decoration'); break; }
       }
-      art.style.removeProperty('opacity');
-      art.style.removeProperty('transition');
+      clearBlockedArticleStyle(art);
+      applyHideToArticle(art);
     });
   }
 
@@ -3003,10 +3021,12 @@
   function applyHideToArticle(art) {
     const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
     const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
-    const shouldHide = shouldHideMatched || shouldHideReferral;
+    const shouldHideBlocked = shouldHideBlockedArticles() && art.dataset.xfsBlocked === '1';
+    const shouldHide = shouldHideMatched || shouldHideReferral || shouldHideBlocked;
     if (shouldHide && art.dataset.xfsHidden !== '1') {
       if (shouldHideMatched) incrementHideRuleStatsFromArticle(art);
       art.dataset.xfsHidden = '1';
+      clearBlockedArticleStyle(art);
       art.style.setProperty('max-height',    '2px',    'important');
       art.style.setProperty('min-height',    '0',      'important');
       art.style.setProperty('overflow',      'hidden', 'important');
@@ -3019,6 +3039,7 @@
       art.dataset.xfsHidden = '';
       ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
         .forEach(p => art.style.removeProperty(p));
+      if (art.dataset.xfsBlocked === '1') applyBlockedArticleStyle(art);
     }
   }
 
@@ -3768,6 +3789,7 @@
       }
 
       if (alreadyBlocked) {
+        art.dataset.xfsBlocked = '1';
         for (const a of nameEl.querySelectorAll('a')) {
           const txt = getTextWithEmoji(a).trim();
           if (txt && !txt.startsWith('@')) {
@@ -3775,8 +3797,9 @@
             break;
           }
         }
-        art.style.transition = 'opacity 0.3s';
-        art.style.setProperty('opacity', '0.4', 'important');
+        clearBlockedArticleStyle(art);
+        if (shouldHideBlockedArticles()) applyHideToArticle(art);
+        else applyBlockedArticleStyle(art);
       }
 
       const btn = document.createElement('button');
