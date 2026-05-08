@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.71
+// @version      5.72
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       summeriscoming
 // @license MIT
@@ -46,6 +46,7 @@
     '[\\u02B0-\\u02FF\\u1D2C-\\u1D7F\\u1D80-\\u1DBF\\u2070-\\u209F]{3,}',
   ];
   const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
+  const GREASYFORK_URL = 'https://greasyfork.org/en/scripts/573991-x-fraud-scanner-%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E4%B8%80%E6%89%AB%E7%A9%BA';
   const REMOTE_RULES_FETCH_INTERVAL = 60 * 60 * 1000;
   const REMOTE_RULES_MAX_BYTES = 100 * 1024;
   const REMOTE_RULE_LIMITS = {
@@ -2720,7 +2721,7 @@
     const verSpan = document.createTextNode(`v${GM_info.script.version} · `);
     const gfLink = document.createElement('a');
     gfLink.textContent = 'GreasyFork';
-    gfLink.href = 'https://greasyfork.org/en/scripts/573991-x-fraud-scanner-%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E4%B8%80%E6%89%AB%E7%A9%BA';
+    gfLink.href = GREASYFORK_URL;
     gfLink.target = '_blank';
     gfLink.rel = 'noopener noreferrer';
     gfLink.style.cssText = `color:${C.sub};text-decoration:underline;`;
@@ -3740,6 +3741,19 @@
     grid.appendChild(mkToolBtn('合并导入自定义词', () => importKws('merge')));
     grid.appendChild(mkToolBtn('覆盖自定义词', () => importKws('replace')));
     p.appendChild(grid);
+
+    const toolsFtr = document.createElement('div');
+    toolsFtr.style.cssText = `padding:2px 2px 0;font-size:9px;color:${C.sub};text-align:center;opacity:0.62;`;
+    toolsFtr.appendChild(document.createTextNode(`v${GM_info?.script?.version || ''} · `));
+    const toolsGfLink = document.createElement('a');
+    toolsGfLink.textContent = 'GreasyFork';
+    toolsGfLink.href = GREASYFORK_URL;
+    toolsGfLink.target = '_blank';
+    toolsGfLink.rel = 'noopener noreferrer';
+    toolsGfLink.style.cssText = `color:${C.sub};text-decoration:underline;`;
+    toolsFtr.appendChild(toolsGfLink);
+    p.appendChild(toolsFtr);
+
     document.body.appendChild(p);
 
     setTimeout(() => {
