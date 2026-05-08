@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.77
+// @version      5.78
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -2598,7 +2598,7 @@
         const wrap = document.createElement('div');
         wrap.style.cssText = 'break-inside:avoid;page-break-inside:avoid;';
 
-        const row = document.createElement('label');
+        const row = document.createElement('div');
         row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px 5px 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
         row.title = hitTooltipFromUser(user);
         row.onmouseenter = () => { if (!row.dataset.blocked) row.style.background = C.rowHover; };
@@ -2609,11 +2609,18 @@
         cb.checked = opts.precheck !== false;
         cb.style.cssText = 'width:11px;height:11px;margin-top:2px;flex-shrink:0;cursor:pointer;accent-color:#f4212e;';
         allCheckboxes.push({ cb, handle: user.handle, row });
+        row.onclick = e => {
+          if (e.target.closest('a,input,button')) return;
+          cb.checked = !cb.checked;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        };
 
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
-        let html = `<div class="xfs-name" style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(user.displayName)}</div>`;
-        html += `<div style="color:${C.sub};font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@${esc(user.handle)}</div>`;
+        const profileUrl = `https://x.com/${encodeURIComponent(user.handle)}`;
+        const profileTitle = `打开 @${user.handle} 主页`;
+        let html = `<div class="xfs-name" style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;">${esc(user.displayName)}</a></div>`;
+        html += `<div style="color:${C.sub};font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:none;">@${esc(user.handle)}</a></div>`;
         if (user.cats.has('heart') && user.heartHits && user.heartHits.length > 0) {
           html += `<div style="font-size:9px;color:${C.heart};">[心形] ${esc(user.heartHits.join(''))} 在用户名中</div>`;
         }
@@ -2639,6 +2646,9 @@
           });
         }
         info.innerHTML = html;
+        info.querySelectorAll('a.xfs-profile-link').forEach(a => {
+          a.addEventListener('click', e => e.stopPropagation());
+        });
 
         row.appendChild(cb);
         row.appendChild(info);
