@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.79
+// @version      5.80
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -1614,6 +1614,42 @@
     content: '内容关键词',
     regex: '正则',
   };
+  const RULE_ID_PREFIX = {
+    content: 'keyword',
+    name: 'name',
+    regex: 'regex',
+  };
+
+  function ruleId(type, idx) {
+    return `${RULE_ID_PREFIX[type] || type}-${idx + 1}`;
+  }
+
+  function ruleListForType(type) {
+    if (type === 'content') return SUSPECT_KWS;
+    if (type === 'name') return SUSPECT_NAME_KWS;
+    if (type === 'regex') return SUSPECT_RE_KWS;
+    return [];
+  }
+
+  function currentRuleId(type, key) {
+    const idx = ruleListForType(type).findIndex(item => String(item).trim() === String(key || '').trim());
+    return idx >= 0 ? ruleId(type, idx) : '';
+  }
+
+  function ruleTitle(type, idx, value) {
+    return `ID: ${ruleId(type, idx)}\n${value}`;
+  }
+
+  function statsRuleLabel(type, key) {
+    const id = currentRuleId(type, key);
+    if (type === 'regex') return id || regexRuleLabel(key);
+    return id ? `${id} · ${key}` : key;
+  }
+
+  function statsRuleTitle(type, key) {
+    const id = currentRuleId(type, key);
+    return id ? `ID: ${id}\n${key}` : key;
+  }
 
   function hideRuleStatItems(matchInfo) {
     const seen = new Set();
@@ -2097,8 +2133,8 @@
         const mid = document.createElement('div');
         mid.style.cssText = 'min-width:0;';
         const key = document.createElement('div');
-        key.textContent = type === 'regex' ? regexRuleLabel(item.key) : item.key;
-        key.title = item.key;
+        key.textContent = statsRuleLabel(type, item.key);
+        key.title = statsRuleTitle(type, item.key);
         key.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px;';
         const barWrap = document.createElement('div');
         barWrap.style.cssText = `height:7px;background:${C.border};border-radius:999px;overflow:hidden;`;
@@ -2267,6 +2303,7 @@
       textRow.appendChild(textLbl);
       SUSPECT_KWS.forEach((kw, i) => {
         const chip = document.createElement('span');
+        chip.title = ruleTitle('content', i, kw);
         chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.btnBorder};border-radius:10px;font-size:10px;color:${C.text};`;
         chip.textContent = kw + ' ';
         const del = document.createElement('button');
@@ -2300,6 +2337,7 @@
       nameRow.appendChild(nameLbl);
       SUSPECT_NAME_KWS.forEach((kw, i) => {
         const chip = document.createElement('span');
+        chip.title = ruleTitle('name', i, kw);
         chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.nameKw};border-radius:10px;font-size:10px;color:${C.nameKw};`;
         chip.textContent = kw + ' ';
         const del = document.createElement('button');
@@ -2354,7 +2392,7 @@
         reRow.style.cssText = rowCss;
         SUSPECT_RE_KWS.forEach((pat, i) => {
           const chip = document.createElement('span');
-          chip.title = pat;
+          chip.title = ruleTitle('regex', i, pat);
           chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:360px;`;
           const lbl = document.createElement('span');
           lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
