@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.72
+// @version      5.73
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       summeriscoming
 // @license MIT
@@ -464,6 +464,7 @@
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let autoReferralDetectActive = GM_getValue('auto_referral_detect', true); // low-rate background referral lookup for visible replies
+  let skipVerifiedAccountsActive = GM_getValue('skip_verified_accounts', true); // global safety: verified accounts are never hidden or blocked
   let youngAccountFilterActive = GM_getValue('young_account_filter_active', false); // optional profile-created-at filter; default off due to lookup cost and false positives
   let youngAccountCutoffMode = normalizeYoungAccountCutoffMode(GM_getValue('young_account_cutoff_mode', 'days'));
   let youngAccountMaxAgeDays = normalizeYoungAccountDays(GM_getValue('young_account_max_age_days', 30));
@@ -715,6 +716,29 @@
       return t && !t.startsWith('@');
     });
     return nameLink ? getTextWithEmoji(nameLink).trim() || handle : handle;
+  }
+
+  function nodeHasVerifiedBadge(node) {
+    return !!node?.querySelector?.('[data-testid="icon-verified"],svg[aria-label="Verified account"]');
+  }
+
+  function articleHasVerifiedBadge(art) {
+    const nameEl = art?.querySelector?.('[data-testid="User-Name"]');
+    return nodeHasVerifiedBadge(nameEl);
+  }
+
+  function isProtectedVerifiedArticle(art) {
+    return !!(skipVerifiedAccountsActive && articleHasVerifiedBadge(art));
+  }
+
+  function isProtectedVerifiedHandle(handle) {
+    if (!skipVerifiedAccountsActive) return false;
+    const key = normalizeHandle(handle);
+    if (!key) return false;
+    return [...document.querySelectorAll('article[data-testid="tweet"]')].some(art => {
+      const artHandle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+      return artHandle === key && articleHasVerifiedBadge(art);
+    });
   }
 
   function loadReferralCache() {
@@ -1634,6 +1658,36 @@
     }
   }
 
+  function clearProtectedVerifiedArticleState(art) {
+    if (!art) return;
+    art.dataset.xfsHideMatched = '0';
+    art.dataset.xfsReferralAccount = '0';
+    art.dataset.xfsReferralQueued = '0';
+    delete art.dataset.xfsBlocked;
+    delete art.dataset.xfsHideRuleStats;
+    delete art.dataset.xfsHideStatsRecorded;
+    clearBlockedArticleStyle(art);
+    if (art.dataset.xfsHidden === '1') {
+      art.dataset.xfsHidden = '';
+      ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
+        .forEach(p => art.style.removeProperty(p));
+    }
+    const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+    if (handle) {
+      matchedHandlesInView.delete(handle);
+      matchedUsersCache.delete(handle);
+    }
+    art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => btn.remove());
+  }
+
+  function clearProtectedVerifiedArticlesInView() {
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (isProtectedVerifiedArticle(art)) clearProtectedVerifiedArticleState(art);
+    });
+    updateHideBadge();
+    updateReferralBadge();
+  }
+
   function loadHideRuleStats() {
     const raw = GM_getValue(HIDE_RULE_STATS_KEY, {});
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -1668,6 +1722,10 @@
 
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
+        return;
+      }
 
       let handle = null;
       for (const sp of nameEl.querySelectorAll('span')) {
@@ -1840,6 +1898,10 @@
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (isMainTweetArticle(art)) {
         clearMainTweetXfsState(art);
+        return;
+      }
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
         return;
       }
       const nameEl = art.querySelector('[data-testid="User-Name"]');
@@ -2055,8 +2117,9 @@
     document.getElementById('xfs-panel')?.remove();
     document.getElementById('xfs-panel-dock')?.remove();
 
-    const topUsers = allUsers.slice(0, MAX_BLOCK);
-    const overflow = allUsers.length - topUsers.length;
+    const panelUsers = (allUsers || []).filter(user => !isProtectedVerifiedHandle(user.handle));
+    const topUsers = panelUsers.slice(0, MAX_BLOCK);
+    const overflow = panelUsers.length - topUsers.length;
 
     // ── Build ordered list first (needed for adaptive width) ──
     function getPrimaryCat(u) {
@@ -2112,7 +2175,7 @@
     title.style.cssText = 'font-size:13px;font-weight:700;flex:1;';
 
     const badge = document.createElement('span');
-    badge.textContent = overflow > 0 ? `${topUsers.length}/${allUsers.length}，还有 ${overflow} 个` : `${topUsers.length} 个`;
+    badge.textContent = overflow > 0 ? `${topUsers.length}/${panelUsers.length}，还有 ${overflow} 个` : `${topUsers.length} 个`;
     badge.style.cssText = `font-size:11px;color:${overflow > 0 ? C.blockRed : C.sub};`;
 
     const countBadge = document.createElement('span');
@@ -2638,7 +2701,8 @@
         });
 
         for (const handle of uniqueHandles) {
-          if (!isHandleStillChecked(handle)) {
+          if (!isHandleStillChecked(handle) || isProtectedVerifiedHandle(handle)) {
+            if (isProtectedVerifiedHandle(handle)) clearProtectedVerifiedArticlesInView();
             skipped++;
             blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
             updateDockIndicator();
@@ -2987,6 +3051,7 @@
 
     function collectCells() {
       document.querySelectorAll('[data-testid="UserCell"]').forEach(cell => {
+        if (skipVerifiedAccountsActive && nodeHasVerifiedBadge(cell)) return;
         // @handle span — X.com reliably renders these as visible span text
         let handle = null;
         for (const sp of cell.querySelectorAll('span')) {
@@ -3049,6 +3114,10 @@
       clearMainTweetXfsState(art);
       return;
     }
+    if (isProtectedVerifiedArticle(art)) {
+      clearProtectedVerifiedArticleState(art);
+      return;
+    }
     const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
     const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
     const shouldHideBlocked = shouldHideBlockedArticles() && art.dataset.xfsBlocked === '1';
@@ -3082,6 +3151,10 @@
     const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (art === firstArt) return;
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
+        return;
+      }
       const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
       const key = normalizeHandle(handle);
       if (!key) return;
@@ -3154,6 +3227,10 @@
 
   function setReferralButtons(handle, item) {
     const key = normalizeHandle(handle);
+    if (isProtectedVerifiedHandle(key)) {
+      clearProtectedVerifiedArticlesInView();
+      return;
+    }
     const isReferral = !!(item && item.isReferral);
     document.querySelectorAll(`button[data-xfs-handle]`).forEach(btn => {
       if (normalizeHandle(btn.dataset.xfsHandle) !== key) return;
@@ -3172,6 +3249,10 @@
     const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (art === firstArt) return;
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
+        return;
+      }
       const artHandle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
       if (artHandle !== key) return;
       art.dataset.xfsReferralHandle = artHandle;
@@ -3186,9 +3267,10 @@
   function scheduleReferralCheck(art, handle, isOP = false, hintText = '') {
     if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
     const key = normalizeHandle(handle);
-    if (!key || isOP) {
+    if (!key || isOP || isProtectedVerifiedArticle(art)) {
       art.dataset.xfsReferralAccount = '0';
       art.dataset.xfsReferralQueued = '0';
+      if (isProtectedVerifiedArticle(art)) clearProtectedVerifiedArticleState(art);
       return;
     }
     art.dataset.xfsReferralHandle = key;
@@ -3221,6 +3303,10 @@
     const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (art === firstArt) return;
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
+        return;
+      }
       const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
       const key = normalizeHandle(handle);
       if (!key || blockedHandles.has(key)) return;
@@ -3240,12 +3326,16 @@
       const displayNames = new Map();
       const rememberHandle = (handle, displayName = '') => {
         const key = normalizeHandle(handle);
-        if (!key || blockedHandles.has(key)) return;
+        if (!key || blockedHandles.has(key) || isProtectedVerifiedHandle(key)) return;
         if (displayName) displayNames.set(key, displayName);
         if (!handles.includes(key)) handles.push(key);
       };
       document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
         if (art === firstArt) return;
+        if (isProtectedVerifiedArticle(art)) {
+          clearProtectedVerifiedArticleState(art);
+          return;
+        }
         const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
         const key = normalizeHandle(handle);
         const displayName = key ? extractDisplayNameFromArticle(art, key) : '';
@@ -3501,6 +3591,7 @@
       '',
       '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角屏蔽按钮会变橙色。',
+      '会员不隐藏不拉黑：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入屏蔽候选。',
       '',
       '屏蔽新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的屏蔽候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
@@ -3562,6 +3653,14 @@
       youngRowText.textContent = youngAccountCutoffMode === 'date' ? '晚于' : '少于';
     }
 
+    function refreshVerifiedProtectionControls() {
+      verifiedProtectBtn.textContent = `会员不隐藏不拉黑：${skipVerifiedAccountsActive ? '开' : '关'}`;
+      verifiedProtectBtn.style.borderColor = skipVerifiedAccountsActive ? C.mute : C.btnBorder;
+      verifiedProtectBtn.style.color = skipVerifiedAccountsActive ? C.mute : C.sub;
+      verifiedProtectBtn.style.background = skipVerifiedAccountsActive ? '#effaf7' : '#fff';
+      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入屏蔽候选。';
+    }
+
     const autoReferralBtn = mkToolBtn('', () => {
       autoReferralDetectActive = !autoReferralDetectActive;
       GM_setValue('auto_referral_detect', autoReferralDetectActive);
@@ -3576,6 +3675,25 @@
     autoReferralBtn.style.borderColor = autoReferralDetectActive ? C.referralHot : C.btnBorder;
     autoReferralBtn.style.color = autoReferralDetectActive ? C.referralHot : C.sub;
     autoReferralBtn.style.background = autoReferralDetectActive ? '#fff8ed' : '#fff';
+
+    const verifiedProtectBtn = mkToolBtn('', () => {
+      skipVerifiedAccountsActive = !skipVerifiedAccountsActive;
+      GM_setValue('skip_verified_accounts', skipVerifiedAccountsActive);
+      refreshVerifiedProtectionControls();
+      if (skipVerifiedAccountsActive) {
+        clearProtectedVerifiedArticlesInView();
+      } else {
+        document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+          if (articleHasVerifiedBadge(art)) delete art.dataset.xfsIbtn;
+        });
+        reapplyContentRulesForVisible();
+        applyReferralForVisible();
+        injectInlineButtons();
+        applyHideAll();
+      }
+      showToast(skipVerifiedAccountsActive ? '会员保护已开启' : '会员保护已关闭', false);
+    });
+    refreshVerifiedProtectionControls();
 
     function refreshRemoteRulesControls() {
       remoteRulesBtn.textContent = `远程规则订阅：${remoteRulesActive ? '开' : '关'}`;
@@ -3734,6 +3852,7 @@
     p.appendChild(editBtn);
     p.appendChild(statsBtn);
     grid.appendChild(autoReferralBtn);
+    grid.appendChild(verifiedProtectBtn);
     grid.appendChild(remoteWrap);
     grid.appendChild(youngWrap);
     grid.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
@@ -3797,6 +3916,10 @@
       if (isMainTweetArticle(art)) {
         clearMainTweetXfsState(art);
         art.querySelectorAll('button[data-xfs-handle]').forEach(btn => btn.remove());
+        return;
+      }
+      if (isProtectedVerifiedArticle(art)) {
+        clearProtectedVerifiedArticleState(art);
         return;
       }
 
@@ -3914,6 +4037,11 @@
         const csrf = getCsrf();
         if (!csrf) { showToast('未找到登录凭证（ct0 cookie）', true); return; }
         const isBlocked = btn.dataset.xfsState === 'blocked';
+        if (!isBlocked && isProtectedVerifiedHandle(handle)) {
+          clearProtectedVerifiedArticlesInView();
+          showToast('会员保护已开启：不屏蔽会员账号', false);
+          return;
+        }
         btn.disabled = true; btn.style.opacity = '0.35';
 
         if (isBlocked) {
