@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.76
+// @version      5.77
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -876,10 +876,10 @@
   }
 
   function referralItemDescription(item) {
-    if (!item) return 'profile referral link';
+    if (!item) return '主页导流链接';
     if (item.isLinkReferral && item.urls?.length) return item.urls[0];
     if (item.isYoungAccount) return `注册 ${item.accountAgeDays} 天，${youngAccountRuleLabel()}`;
-    return item.urls?.[0] || 'profile referral link';
+    return item.urls?.[0] || '主页导流链接';
   }
 
   function rememberReferralAccount(handle, urls, opts = {}) {
@@ -3598,11 +3598,11 @@
       '',
       '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
       '',
-      '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
+      '导流号：根据账号主页里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角拉黑按钮会变橙色。',
       '不自动隐藏/拉黑会员：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。',
       '',
-      '拉黑新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的拉黑候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
+      '拉黑新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的拉黑候选。日期选择框默认是一个月之前的今天。它需要额外查询主页，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
       '内容扫描按钮会打开确认面板；导流扫描按钮会直接拉黑当前视图命中的导流号。',
     ].join('\n'));
@@ -3759,7 +3759,7 @@
     youngTitle.textContent = '高误伤：拉黑新号';
     youngTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.blockRed};`;
     const youngNote = document.createElement('div');
-    youngNote.textContent = '新号会进入橙标和导流扫描拉黑候选；需要逐个查 profile，速度慢，容易限流，新号不一定是垃圾号。';
+    youngNote.textContent = '新号会进入橙标和导流扫描拉黑候选；需要逐个查主页，速度慢，容易限流，新号不一定是垃圾号。';
     youngNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const youngAccountBtn = mkToolBtn('', () => {
       youngAccountFilterActive = !youngAccountFilterActive;
@@ -4373,7 +4373,7 @@
     if (badge) btn.appendChild(badge);
     btn.title = hideReferralActive
       ? '导流号回复已隐藏（橙标），点击显示。受平台接口/限速影响，识别会稍有延迟'
-      : '点击隐藏 profile 导流号回复（橙标）。只检查已加载回复，识别会稍有延迟';
+      : '点击隐藏导流号回复（橙标）。只检查已加载回复，识别会稍有延迟';
     btn.style.background = hideReferralActive ? 'rgba(95,111,137,0.14)' : 'rgba(255,255,255,0.92)';
     btn.style.border = hideReferralActive ? `2px solid ${C.referral}` : `2px dashed ${C.btnBorder}`;
     btn.style.color = hideReferralActive ? C.referral : C.sub;
