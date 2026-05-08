@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.78
+// @version      5.79
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -2762,6 +2762,9 @@
             (rowMap.get(handle) || []).forEach(row => {
               row.dataset.blocked = '1';
               row.style.opacity = '0.3';
+              row.querySelectorAll('a.xfs-profile-link').forEach(a => {
+                a.title = '如果错误拉黑，打开主页手动恢复';
+              });
               const nameEl = row.querySelector('.xfs-name');
               if (nameEl) nameEl.style.textDecoration = 'line-through';
             });
