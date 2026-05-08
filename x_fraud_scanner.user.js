@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.75
+// @version      5.76
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -2429,7 +2429,7 @@
       const checked = s.match(/拉黑\s*\((\d+)\)/);
       if (checked) return `拉黑${checked[1]}`;
       const done = s.match(/完成\s*(\d+)/);
-      if (done) return `完成${done[1]}`;
+      if (done) return `拉黑${done[1]}`;
       return s.length > 12 ? `${s.slice(0, 12)}...` : s;
     }
     function updateDockIndicator(text = dockText(), opts = {}) {
@@ -2492,7 +2492,7 @@
         'border-radius:0 9px 0 0',
       ].join(';');
       dockCaption = document.createElement('div');
-      dockCaption.textContent = '拉黑面板';
+      dockCaption.textContent = '批量拉黑队列';
       dockCaption.style.cssText = [
         `flex:1;color:${C.sub};opacity:0.78`,
         'font-size:10px', 'font-weight:700', 'line-height:1',
@@ -2507,8 +2507,8 @@
       dockActions.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;';
       dockRestoreBtn = document.createElement('button');
       dockRestoreBtn.type = 'button';
-      dockRestoreBtn.textContent = '打开拉黑面板';
-      dockRestoreBtn.title = '打开拉黑面板';
+      dockRestoreBtn.textContent = '打开队列';
+      dockRestoreBtn.title = '打开批量拉黑队列';
       dockRestoreBtn.style.cssText = [
         'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
         `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
@@ -2652,7 +2652,7 @@
     // ── Hint bar (revealed after blocking completes) ──
     const hint = document.createElement('div');
     hint.style.cssText = `padding:5px 12px;border-top:1px solid ${C.border};font-size:11px;color:${C.sub};text-align:center;flex-shrink:0;display:none;background:${C.catBg};`;
-    hint.textContent = '清理完成 · 点击完成按钮刷新页面';
+    hint.textContent = '拉黑完成 · 点击完成按钮刷新页面';
 
     // ── Footer ──
     const ftr = document.createElement('div');
@@ -2766,10 +2766,10 @@
         blockingComplete = true;
         blockingInProgress = false;
         blockBtn.disabled = false;
-        blockBtn.textContent = `完成 ${done}${skipped ? `，跳过 ${skipped}` : ''}${failed ? `，${failed} 失败` : ''}，点击刷新`;
-        blockBtn.title = '清理完成，点击刷新页面';
+        blockBtn.textContent = `拉黑完成 ${done}${skipped ? `，跳过 ${skipped}` : ''}${failed ? `，${failed} 失败` : ''}，点击刷新`;
+        blockBtn.title = '拉黑完成，点击刷新页面';
         blockBtn.onclick = () => location.reload();
-        badge.textContent = `完成 ${done} 个${skipped ? `，跳过 ${skipped} 个` : ''}${failed ? `，失败 ${failed} 个` : ''}`;
+        badge.textContent = `拉黑完成 ${done} 个${skipped ? `，跳过 ${skipped} 个` : ''}${failed ? `，失败 ${failed} 个` : ''}`;
         updateDockIndicator(badge.textContent, { showRefresh: true });
         hint.style.display = '';
         markCleanupButtonsComplete(opts.refreshButtonIds);
@@ -3552,7 +3552,7 @@
       b.style.opacity = '';
       b.style.pointerEvents = '';
       b.textContent = DONE_SVG;
-      b.title = '清理完成，点击刷新页面';
+      b.title = '拉黑完成，点击刷新页面';
       b.style.border = `2px solid ${C.mute}`;
       b.style.color = C.mute;
       b.style.background = `${C.mute}18`;
