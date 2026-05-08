@@ -9,9 +9,9 @@
   "regexKeywords": [
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,200}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){4,})(?=[\\s\\S]*(\\p{Extended_Pictographic}|\\p{Emoji_Presentation})[\\s\\S]*(?!\\1)(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,100}(?![\\s\\S]))(?=[\\s\\S]*想找个)[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){3,})[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=.*\\p{Script=Han})(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{N}\\p{P}\\s]){3,})(?=[\\s\\S]*([^\\p{Script=Han}\\p{Script=Latin}\\p{N}\\p{P}\\s])[\\s\\S]*(?!\\1)[^\\p{Script=Han}\\p{Script=Latin}\\p{N}\\p{P}\\s])[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){3,})(?=[\\s\\S]*[A-Za-z](?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})[.,!?'\"():;\\-\\s]*[A-Za-z])[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65]){3,})[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=.*\\p{Script=Han})(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65]){3,})(?=[\\s\\S]*([^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65])[\\s\\S]*(?!\\1)[^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65])[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65]){3,})(?=[\\s\\S]*[A-Za-z](?:[^\\p{Script=Han}\\p{Script=Latin}\\x00-\\x7F\\u3000-\\u303F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65])+[A-Za-z])[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+"
   ]
 }
