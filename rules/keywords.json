@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-08.1",
+  "rulesVersion": "2026-05-08.2",
   "updatedAt": "2026-05-08T00:00:00Z",
   "contentKeywords": [],
   "nameKeywords": [
@@ -12,6 +12,7 @@
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}]){3,})[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=.*\\p{Script=Han})(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}]){3,})(?=[\\s\\S]*([^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}])[\\s\\S]*(?!\\1)[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}])[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}]){3,})(?=[\\s\\S]*[A-Za-z](?:[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}])+[A-Za-z])[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+"
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{8,120}(?![\\s\\S]))(?:[\\s\\S]{0,2}(?:\\p{Extended_Pictographic}|\\p{S}|[\\u27C0-\\u2BFF]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}])){3,}[\\s\\S]{0,2}"
   ]
 }
