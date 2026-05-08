@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.73
+// @version      5.74
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       summeriscoming
 // @license MIT
@@ -464,7 +464,7 @@
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let autoReferralDetectActive = GM_getValue('auto_referral_detect', true); // low-rate background referral lookup for visible replies
-  let skipVerifiedAccountsActive = GM_getValue('skip_verified_accounts', true); // global safety: verified accounts are never hidden or blocked
+  let skipVerifiedAccountsActive = GM_getValue('skip_verified_accounts', true); // global safety: verified accounts are skipped by automatic hide/block flows
   let youngAccountFilterActive = GM_getValue('young_account_filter_active', false); // optional profile-created-at filter; default off due to lookup cost and false positives
   let youngAccountCutoffMode = normalizeYoungAccountCutoffMode(GM_getValue('young_account_cutoff_mode', 'days'));
   let youngAccountMaxAgeDays = normalizeYoungAccountDays(GM_getValue('young_account_max_age_days', 30));
@@ -1660,24 +1660,33 @@
 
   function clearProtectedVerifiedArticleState(art) {
     if (!art) return;
+    const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+    const isBlocked = handle && blockedHandles.has(handle);
     art.dataset.xfsHideMatched = '0';
     art.dataset.xfsReferralAccount = '0';
     art.dataset.xfsReferralQueued = '0';
-    delete art.dataset.xfsBlocked;
+    if (isBlocked) art.dataset.xfsBlocked = '1';
+    else delete art.dataset.xfsBlocked;
     delete art.dataset.xfsHideRuleStats;
     delete art.dataset.xfsHideStatsRecorded;
     clearBlockedArticleStyle(art);
+    if (isBlocked) applyBlockedArticleStyle(art);
     if (art.dataset.xfsHidden === '1') {
       art.dataset.xfsHidden = '';
       ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
         .forEach(p => art.style.removeProperty(p));
     }
-    const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
     if (handle) {
       matchedHandlesInView.delete(handle);
       matchedUsersCache.delete(handle);
     }
-    art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => btn.remove());
+    art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => {
+      btn.dataset.xfsMatched = '0';
+      btn.dataset.xfsReferralAccount = '0';
+      delete btn.dataset.xfsMatchTooltip;
+      delete btn.dataset.xfsReferralTooltip;
+      updateInlineBlockButton(btn);
+    });
   }
 
   function clearProtectedVerifiedArticlesInView() {
@@ -3591,7 +3600,7 @@
       '',
       '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角屏蔽按钮会变橙色。',
-      '会员不隐藏不拉黑：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入屏蔽候选。',
+      '会员不隐藏不拉黑：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动屏蔽候选；手动 block 按钮仍可用。',
       '',
       '屏蔽新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的屏蔽候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
@@ -3658,7 +3667,7 @@
       verifiedProtectBtn.style.borderColor = skipVerifiedAccountsActive ? C.mute : C.btnBorder;
       verifiedProtectBtn.style.color = skipVerifiedAccountsActive ? C.mute : C.sub;
       verifiedProtectBtn.style.background = skipVerifiedAccountsActive ? '#effaf7' : '#fff';
-      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入屏蔽候选。';
+      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动屏蔽候选；手动 block 按钮仍可用。';
     }
 
     const autoReferralBtn = mkToolBtn('', () => {
@@ -3918,10 +3927,6 @@
         art.querySelectorAll('button[data-xfs-handle]').forEach(btn => btn.remove());
         return;
       }
-      if (isProtectedVerifiedArticle(art)) {
-        clearProtectedVerifiedArticleState(art);
-        return;
-      }
 
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
@@ -3946,17 +3951,19 @@
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
 
+      const isProtectedVerified = isProtectedVerifiedArticle(art);
       const allowFilterHighlight = location.pathname !== '/home';
-      const matchInfo = allowFilterHighlight
+      const matchInfo = allowFilterHighlight && !isProtectedVerified
         ? matchesFilters(displayName, fullText)
         : { matched: false, cats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [] };
       const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchInfo;
-      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
+      if (isProtectedVerified) clearProtectedVerifiedArticleState(art);
+      else setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
       const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
       const isOP = art === firstArt;
       art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
       if (alreadyBlocked) art.dataset.xfsReferralAccount = '0';
-      else scheduleReferralCheck(art, handle, isOP, displayName);
+      else if (!isProtectedVerified) scheduleReferralCheck(art, handle, isOP, displayName);
       if (!isOP && matched && !alreadyBlocked && /\/status\/\d/.test(location.pathname)) {
         matchedHandlesInView.add(handle);
         if (!matchedUsersCache.has(handle))
@@ -3982,7 +3989,7 @@
       btn.dataset.xfsState   = alreadyBlocked ? 'blocked' : 'unblocked';
       btn.dataset.xfsMatched = matched ? '1' : '0';
       if (matched) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits });
-      const referral = referralReason(handle);
+      const referral = isProtectedVerified ? null : referralReason(handle);
       btn.dataset.xfsReferralAccount = referral ? '1' : '0';
       if (referral?.urls?.length) btn.dataset.xfsReferralUrl = referral.urls[0];
       if (referral) btn.dataset.xfsReferralTooltip = `导流号: ${referralItemDescription(referral)}`;
@@ -4037,11 +4044,6 @@
         const csrf = getCsrf();
         if (!csrf) { showToast('未找到登录凭证（ct0 cookie）', true); return; }
         const isBlocked = btn.dataset.xfsState === 'blocked';
-        if (!isBlocked && isProtectedVerifiedHandle(handle)) {
-          clearProtectedVerifiedArticlesInView();
-          showToast('会员保护已开启：不屏蔽会员账号', false);
-          return;
-        }
         btn.disabled = true; btn.style.opacity = '0.35';
 
         if (isBlocked) {
