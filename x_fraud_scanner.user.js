@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.74
-// @description  扫描推文回复中的垃圾用户批量屏蔽
+// @version      5.75
+// @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzEiIGZpbGw9IiNmNDIxMmUiLz48Y2lyY2xlIGN4PSIyNyIgY3k9IjI3IiByPSIxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIvPjxsaW5lIHgxPSIzNSIgeTE9IjM1IiB4Mj0iNDgiIHkyPSI0OCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjIxIiB5MT0iMjciIHgyPSIzMyIgeTI9IjI3IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48bGluZSB4MT0iMjciIHkxPSIyMSIgeDI9IjI3IiB5Mj0iMzMiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==
@@ -2190,7 +2190,7 @@
     const countBadge = document.createElement('span');
     countBadge.className = 'xfs-persistent-blocked-count';
     countBadge.textContent = `累计 ${formatBlockedCount(persistentBlockedCount)}`;
-    countBadge.title = '仅供参考：这是 XFS 脚本累计成功屏蔽数，不是 X 平台全部已屏蔽账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
+    countBadge.title = '仅供参考：这是 XFS 脚本累计成功拉黑数，不是 X 平台全部已拉黑账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
     countBadge.style.cssText = `font-size:10px;color:${C.mute};background:${C.mute}12;border:1px solid ${C.mute}55;border-radius:999px;padding:1px 6px;white-space:nowrap;`;
 
     const authDot = document.createElement('span');
@@ -2426,8 +2426,8 @@
       const s = String(text || '').trim();
       const progress = s.match(/\d+\s*\/\s*\d+(?:\s*\(\d+失败\))?/);
       if (progress) return progress[0].replace(/\s+/g, '');
-      const checked = s.match(/屏蔽\s*\((\d+)\)/);
-      if (checked) return `屏蔽${checked[1]}`;
+      const checked = s.match(/拉黑\s*\((\d+)\)/);
+      if (checked) return `拉黑${checked[1]}`;
       const done = s.match(/完成\s*(\d+)/);
       if (done) return `完成${done[1]}`;
       return s.length > 12 ? `${s.slice(0, 12)}...` : s;
@@ -2492,7 +2492,7 @@
         'border-radius:0 9px 0 0',
       ].join(';');
       dockCaption = document.createElement('div');
-      dockCaption.textContent = '屏蔽面板';
+      dockCaption.textContent = '拉黑面板';
       dockCaption.style.cssText = [
         `flex:1;color:${C.sub};opacity:0.78`,
         'font-size:10px', 'font-weight:700', 'line-height:1',
@@ -2507,8 +2507,8 @@
       dockActions.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;';
       dockRestoreBtn = document.createElement('button');
       dockRestoreBtn.type = 'button';
-      dockRestoreBtn.textContent = '打开屏蔽面板';
-      dockRestoreBtn.title = '打开屏蔽面板';
+      dockRestoreBtn.textContent = '打开拉黑面板';
+      dockRestoreBtn.title = '打开拉黑面板';
       dockRestoreBtn.style.cssText = [
         'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
         `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
@@ -2674,13 +2674,13 @@
     selBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = true; });
 
     const checkedCount = () => allCheckboxes.filter(({ cb }) => cb.checked).length;
-    const blockBtn = mkBtn(`屏蔽 (${checkedCount()})`, true);
+    const blockBtn = mkBtn(`拉黑 (${checkedCount()})`, true);
     let blockingInProgress = false;
     let blockingComplete = false;
 
     allCheckboxes.forEach(({ cb }) => {
       cb.addEventListener('change', () => {
-        if (!blockingInProgress && !blockingComplete) blockBtn.textContent = `屏蔽 (${checkedCount()})`;
+        if (!blockingInProgress && !blockingComplete) blockBtn.textContent = `拉黑 (${checkedCount()})`;
       });
     });
 
@@ -2747,7 +2747,7 @@
               b.style.boxShadow  = '';
               b.style.background = `${C.mute}18`;
               b.style.opacity    = '1';
-              b.title            = (bMatched ? '[匹配过滤] ' : '') + `已屏蔽 · 点击取消 @${handle}`;
+              b.title            = (bMatched ? '[匹配过滤] ' : '') + `已拉黑 · 点击取消 @${handle}`;
             });
             (rowMap.get(handle) || []).forEach(row => {
               row.dataset.blocked = '1';
@@ -2787,7 +2787,7 @@
 
     const rateNote = document.createElement('div');
     rateNote.style.cssText = `padding:3px 12px 5px;font-size:10px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.6;background:${C.catBg};`;
-    rateNote.textContent = 'X.com 限制：每次屏蔽间隔 3-5 秒 · 执行中可取消勾选，未开始的账号会跳过';
+    rateNote.textContent = 'X.com 限制：每次拉黑间隔 3-5 秒 · 执行中可取消勾选，未开始的账号会跳过';
 
     const scriptFtr = document.createElement('div');
     scriptFtr.style.cssText = `padding:2px 12px 4px;font-size:9px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.5;background:${C.catBg};`;
@@ -2802,7 +2802,7 @@
     scriptFtr.appendChild(gfLink);
     scriptFtr.appendChild(document.createTextNode(' · '));
     const xBlockedLink = document.createElement('a');
-    xBlockedLink.textContent = 'X 已屏蔽账号';
+    xBlockedLink.textContent = 'X 已拉黑账号';
     xBlockedLink.href = 'https://x.com/settings/blocked/all';
     xBlockedLink.target = '_blank';
     xBlockedLink.rel = 'noopener noreferrer';
@@ -2944,7 +2944,7 @@
           if (btn && (!stats || stats.done + stats.failed === 0)) {
             btn.disabled = false;
             btn.style.opacity = '';
-            btn.title = '当前视图内容垃圾号自动屏蔽';
+            btn.title = '当前视图内容垃圾号自动拉黑';
           }
         },
       });
@@ -3230,7 +3230,7 @@
     const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : '');
     const handle = btn.dataset.xfsHandle || '';
     const details = [btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
-    btn.title = prefix + (isBlocked ? `已屏蔽 · 点击取消 @${handle}` : `屏蔽 @${handle}`)
+    btn.title = prefix + (isBlocked ? `已拉黑 · 点击取消 @${handle}` : `拉黑 @${handle}`)
       + (details ? `\n\n命中规则:\n${details}` : '');
   }
 
@@ -3417,8 +3417,8 @@
         return;
       }
       progress.update(lookupHandles.length > 0
-        ? `发现 ${users.length} 个导流号，正在自动屏蔽...`
-        : `使用已识别的 ${users.length} 个导流号，正在自动屏蔽...`);
+        ? `发现 ${users.length} 个导流号，正在自动拉黑...`
+        : `使用已识别的 ${users.length} 个导流号，正在自动拉黑...`);
       progress.close(900);
       handedOffToBlocker = true;
       showPanel(users, {
@@ -3455,7 +3455,7 @@
   function updatePersistentBlockedBadge() {
     document.querySelectorAll('.xfs-persistent-blocked-count').forEach(badge => {
       badge.textContent = `累计 ${formatBlockedCount(persistentBlockedCount)}`;
-      badge.title = '仅供参考：这是 XFS 脚本累计成功屏蔽数，不是 X 平台全部已屏蔽账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
+      badge.title = '仅供参考：这是 XFS 脚本累计成功拉黑数，不是 X 平台全部已拉黑账号数。只从该统计功能上线后开始记录，保存在本地，不受脚本更新影响。';
     });
   }
 
@@ -3576,7 +3576,7 @@
   }
 
   function resetContentCleanupButtonsIfComplete() {
-    resetCompleteButton('xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动屏蔽', C.blockRed, autoLoadAndScan);
+    resetCompleteButton('xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动拉黑', C.blockRed, autoLoadAndScan);
     resetCompleteButton('xfs-sweep-btn', SWEEP_SVG, '整页回复内容垃圾号一网打尽', C.nameKw, () => {
       if (sweepHasRun) {
         sessionStorage.setItem('xfs-auto-sweep', location.pathname);
@@ -3599,12 +3599,12 @@
       '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
       '',
       '导流号：根据账号 profile 里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
-      '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角屏蔽按钮会变橙色。',
-      '会员不隐藏不拉黑：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动屏蔽候选；手动 block 按钮仍可用。',
+      '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角拉黑按钮会变橙色。',
+      '不自动隐藏/拉黑会员：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。',
       '',
-      '屏蔽新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的屏蔽候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
+      '拉黑新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的拉黑候选。日期选择框默认是一个月之前的今天。它需要额外依赖 profile 查询，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
-      '内容扫描按钮会打开确认面板；导流扫描按钮会直接屏蔽当前视图命中的导流号。',
+      '内容扫描按钮会打开确认面板；导流扫描按钮会直接拉黑当前视图命中的导流号。',
     ].join('\n'));
   }
 
@@ -3649,7 +3649,7 @@
     }
 
     function refreshYoungAccountControls() {
-      youngAccountBtn.textContent = `屏蔽新号：${youngAccountFilterActive ? '开' : '关'}`;
+      youngAccountBtn.textContent = `拉黑新号：${youngAccountFilterActive ? '开' : '关'}`;
       youngAccountBtn.style.borderColor = youngAccountFilterActive ? C.blockRed : C.btnBorder;
       youngAccountBtn.style.color = youngAccountFilterActive ? C.blockRed : C.sub;
       youngAccountBtn.style.background = youngAccountFilterActive ? '#fff1f1' : '#fff';
@@ -3663,11 +3663,11 @@
     }
 
     function refreshVerifiedProtectionControls() {
-      verifiedProtectBtn.textContent = `会员不隐藏不拉黑：${skipVerifiedAccountsActive ? '开' : '关'}`;
+      verifiedProtectBtn.textContent = `不自动隐藏/拉黑会员：${skipVerifiedAccountsActive ? '开' : '关'}`;
       verifiedProtectBtn.style.borderColor = skipVerifiedAccountsActive ? C.mute : C.btnBorder;
       verifiedProtectBtn.style.color = skipVerifiedAccountsActive ? C.mute : C.sub;
       verifiedProtectBtn.style.background = skipVerifiedAccountsActive ? '#effaf7' : '#fff';
-      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动屏蔽候选；手动 block 按钮仍可用。';
+      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。';
     }
 
     const autoReferralBtn = mkToolBtn('', () => {
@@ -3756,17 +3756,17 @@
     const youngWrap = document.createElement('div');
     youngWrap.style.cssText = `border:1px solid ${C.blockRed};background:#fff7f7;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
     const youngTitle = document.createElement('div');
-    youngTitle.textContent = '高误伤：屏蔽新号';
+    youngTitle.textContent = '高误伤：拉黑新号';
     youngTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.blockRed};`;
     const youngNote = document.createElement('div');
-    youngNote.textContent = '新号会进入橙标和导流扫描屏蔽候选；需要逐个查 profile，速度慢，容易限流，新号不一定是垃圾号。';
+    youngNote.textContent = '新号会进入橙标和导流扫描拉黑候选；需要逐个查 profile，速度慢，容易限流，新号不一定是垃圾号。';
     youngNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const youngAccountBtn = mkToolBtn('', () => {
       youngAccountFilterActive = !youngAccountFilterActive;
       GM_setValue('young_account_filter_active', youngAccountFilterActive);
       refreshYoungAccountControls();
       if (youngAccountFilterActive) applyReferralForVisible();
-      showToast(youngAccountFilterActive ? `屏蔽新号已开启：${youngAccountRuleLabel()}` : '屏蔽新号已关闭', false);
+      showToast(youngAccountFilterActive ? `拉黑新号已开启：${youngAccountRuleLabel()}` : '拉黑新号已关闭', false);
     });
     const youngDetailWrap = document.createElement('div');
     youngDetailWrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
@@ -3793,7 +3793,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`屏蔽新号已切换为${youngAccountCutoffMode === 'date' ? '按日期' : '按天数'}`, false);
+      showToast(`拉黑新号已切换为${youngAccountCutoffMode === 'date' ? '按日期' : '按天数'}`, false);
     };
     const youngAccountSelect = document.createElement('select');
     youngAccountSelect.style.cssText = `flex:1;min-width:0;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px;`;
@@ -3817,7 +3817,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`屏蔽新号阈值已设为 ${youngAccountMaxAgeDays} 天`, false);
+      showToast(`拉黑新号阈值已设为 ${youngAccountMaxAgeDays} 天`, false);
     };
     youngDateInput.onchange = () => {
       youngAccountCutoffDate = normalizeDateInputValue(youngDateInput.value);
@@ -3829,7 +3829,7 @@
       saveReferralCache();
       applyReferralForVisible();
       refreshYoungAccountControls();
-      showToast(`屏蔽新号日期已设为 ${youngAccountCutoffDate}`, false);
+      showToast(`拉黑新号日期已设为 ${youngAccountCutoffDate}`, false);
     };
     const youngRowText = document.createElement('span');
     youngRowText.textContent = '少于';
@@ -4052,7 +4052,7 @@
             blockedHandles.delete(handle);
             blockedHandles.delete(normalizeHandle(handle));
             undimArticlesByHandle(handle);
-            showToast(`@${handle} 已取消屏蔽`, false);
+            showToast(`@${handle} 已取消拉黑`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               b.dataset.xfsState = 'unblocked';
               b.disabled         = false;
@@ -4062,7 +4062,7 @@
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
-            showToast(`取消屏蔽 @${handle} 失败`, true);
+            showToast(`取消拉黑 @${handle} 失败`, true);
           }
         } else {
           try {
@@ -4077,7 +4077,7 @@
             dimArticlesByHandle(handle);
             updateHideBadge();
             updateReferralBadge();
-            showToast(`@${handle} 已屏蔽`, false);
+            showToast(`@${handle} 已拉黑`, false);
             document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
               b.dataset.xfsState = 'blocked';
               b.disabled         = false;
@@ -4087,7 +4087,7 @@
             });
           } catch {
             btn.disabled = false; btn.style.opacity = '1';
-            showToast(`屏蔽 @${handle} 失败`, true);
+            showToast(`拉黑 @${handle} 失败`, true);
           }
         }
       };
@@ -4316,11 +4316,11 @@
     injectGearBtn();
     if (!document.getElementById('xfs-referral-scan-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-referral-scan-btn', SCAN_SVG, '扫描并自动屏蔽当前视图导流号；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
+        'xfs-referral-scan-btn', SCAN_SVG, '扫描并自动拉黑当前视图导流号；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
     }
     if (!document.getElementById('xfs-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动屏蔽', 360, C.blockRed, autoLoadAndScan));
+        'xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动拉黑', 360, C.blockRed, autoLoadAndScan));
     }
     if (!document.getElementById('xfs-sweep-btn')) {
       document.body.appendChild(mkIconBtn(
@@ -4351,9 +4351,9 @@
     if (document.getElementById('xfs-list-btn')) return;
     if (!isListPage()) return;
     const path = location.pathname;
-    const label = /\/likes$/.test(path)             ? '批量屏蔽点赞者'
-                : /\/(retweets|reposts)$/.test(path) ? '批量屏蔽转发者'
-                : '批量屏蔽关注者';
+    const label = /\/likes$/.test(path)             ? '批量拉黑点赞者'
+                : /\/(retweets|reposts)$/.test(path) ? '批量拉黑转发者'
+                : '批量拉黑关注者';
     document.body.appendChild(
       mkIconBtn('xfs-list-btn', LIST_SVG, label, 200, C.mute, sweepUserList));
     updateScanButtonsLocked();
@@ -4496,7 +4496,7 @@
     const muteEl = mkIconBtn(
       'xfs-mute-btn',
       MUTE_SVG,
-      '静音选中词（加入首页/通知/搜索的屏蔽词，不影响回复串）',
+      '静音选中词（加入首页/通知/搜索的静音词，不影响回复串）',
       152, C.mute, muteSelectedWord
     );
     muteEl.addEventListener('mousedown', e => {
