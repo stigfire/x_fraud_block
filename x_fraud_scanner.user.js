@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.70
+// @version      5.71
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       summeriscoming
 // @license MIT
@@ -2419,7 +2419,7 @@
         'border-radius:0 9px 0 0',
       ].join(';');
       dockCaption = document.createElement('div');
-      dockCaption.textContent = '待屏蔽账号';
+      dockCaption.textContent = '屏蔽面板';
       dockCaption.style.cssText = [
         `flex:1;color:${C.sub};opacity:0.78`,
         'font-size:10px', 'font-weight:700', 'line-height:1',
@@ -2434,8 +2434,8 @@
       dockActions.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;';
       dockRestoreBtn = document.createElement('button');
       dockRestoreBtn.type = 'button';
-      dockRestoreBtn.textContent = '恢复待屏蔽账号';
-      dockRestoreBtn.title = '恢复待屏蔽账号面板';
+      dockRestoreBtn.textContent = '打开屏蔽面板';
+      dockRestoreBtn.title = '打开屏蔽面板';
       dockRestoreBtn.style.cssText = [
         'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
         `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
