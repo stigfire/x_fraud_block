@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.67
+// @version      5.68
 // @description  扫描推文回复中的垃圾用户批量屏蔽
 // @author       summeriscoming
 // @license MIT
@@ -1612,6 +1612,27 @@
     else delete art.dataset.xfsHideRuleStats;
   }
 
+  function isMainTweetArticle(art) {
+    if (!art || !/\/status\/\d/.test(location.pathname) || isListPage()) return false;
+    return art === document.querySelector('article[data-testid="tweet"]');
+  }
+
+  function clearMainTweetXfsState(art) {
+    if (!art) return;
+    art.dataset.xfsHideMatched = '0';
+    art.dataset.xfsReferralAccount = '0';
+    delete art.dataset.xfsBlocked;
+    delete art.dataset.xfsHideRuleStats;
+    delete art.dataset.xfsHideStatsRecorded;
+    clearBlockedArticleStyle(art);
+    art.querySelectorAll?.('[data-testid="User-Name"] a').forEach(a => a.style.removeProperty('text-decoration'));
+    if (art.dataset.xfsHidden === '1') {
+      art.dataset.xfsHidden = '';
+      ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
+        .forEach(p => art.style.removeProperty(p));
+    }
+  }
+
   function loadHideRuleStats() {
     const raw = GM_getValue(HIDE_RULE_STATS_KEY, {});
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -1816,6 +1837,10 @@
   // ── Visual feedback: dim articles belonging to a blocked handle ──────
   function dimArticlesByHandle(handle) {
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      if (isMainTweetArticle(art)) {
+        clearMainTweetXfsState(art);
+        return;
+      }
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
       let isMatch = false;
@@ -3019,6 +3044,10 @@
 
   // ── Hide helpers ─────────────────────────────────────────────────────
   function applyHideToArticle(art) {
+    if (isMainTweetArticle(art)) {
+      clearMainTweetXfsState(art);
+      return;
+    }
     const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
     const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
     const shouldHideBlocked = shouldHideBlockedArticles() && art.dataset.xfsBlocked === '1';
@@ -3751,6 +3780,11 @@
     const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]:not([data-xfs-ibtn])').forEach(art => {
       art.dataset.xfsIbtn = '1';
+      if (isMainTweetArticle(art)) {
+        clearMainTweetXfsState(art);
+        art.querySelectorAll('button[data-xfs-handle]').forEach(btn => btn.remove());
+        return;
+      }
 
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
