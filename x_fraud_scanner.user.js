@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.82
+// @version      5.83
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -3819,7 +3819,7 @@
       return { wrap, input };
     }
 
-    const nameField = mkField('用户名正则', '\\u{1F1E8}\\u{1F1F3}', '+ 用户名正则');
+    const nameField = mkField('用户名正则', 'bot|news', '+ 用户名正则');
     const contentField = mkField('内容正则', '想找个|哥哥', '+ 内容正则');
     p.appendChild(nameField.wrap);
     p.appendChild(contentField.wrap);
