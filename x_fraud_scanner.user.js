@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.80
+// @version      5.82
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -1608,6 +1608,110 @@
     return { matched: cats.size > 0, cats, heartHits, nameKwHits, kwHits, reHits };
   }
 
+  function clearRuleTestHighlights() {
+    document.querySelectorAll('.xfs-rule-test-hit,.xfs-rule-test-name,.xfs-rule-test-content').forEach(el => {
+      el.classList.remove('xfs-rule-test-hit', 'xfs-rule-test-name', 'xfs-rule-test-content');
+    });
+  }
+
+  function ensureRuleTestStyle() {
+    if (document.getElementById('xfs-rule-test-style')) return;
+    const style = document.createElement('style');
+    style.id = 'xfs-rule-test-style';
+    style.textContent = `
+      article.xfs-rule-test-hit {
+        box-shadow: inset 4px 0 0 #f59e0b !important;
+        background: rgba(245,158,11,0.08) !important;
+      }
+      .xfs-rule-test-name {
+        outline: 2px solid #7b52ab !important;
+        outline-offset: 2px !important;
+        border-radius: 6px !important;
+        background: rgba(123,82,171,0.12) !important;
+      }
+      .xfs-rule-test-content {
+        outline: 2px solid #f4212e !important;
+        outline-offset: 2px !important;
+        border-radius: 6px !important;
+        background: rgba(244,33,46,0.10) !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function compileRuleTestRegex(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    const parsed = _regexPatternParts(value);
+    const pat = parsed.pat || value;
+    return new RegExp(pat, 'mu');
+  }
+
+  function articleRuleTestText(art) {
+    const handle = extractHandleFromArticle(art);
+    const displayName = extractDisplayNameFromArticle(art, handle) || handle || '';
+    const textEl = art.querySelector('[data-testid="tweetText"]');
+    const cardEl = art.querySelector('[data-testid="card.wrapper"]');
+    const bodyLinkText = [
+      ...(textEl ? [...textEl.querySelectorAll('a[href]')] : []),
+      ...(cardEl  ? [...cardEl.querySelectorAll('a[href]')]  : []),
+    ].map(a => a.textContent).join(' ');
+    const fullText = [
+      textEl ? getTextWithEmoji(textEl) : null,
+      cardEl ? getTextWithEmoji(cardEl) : null,
+      bodyLinkText,
+    ].filter(Boolean).join(' ');
+    return { displayName: stripInvisible(displayName), fullText: stripInvisible(fullText), textEl };
+  }
+
+  function runRuleTest(nameRaw, contentRaw) {
+    let nameRe = null;
+    let contentRe = null;
+    try {
+      nameRe = compileRuleTestRegex(nameRaw);
+      contentRe = compileRuleTestRegex(contentRaw);
+    } catch (e) {
+      showToast(`测试正则错误：${e.message}`, true);
+      return { scanned: 0, nameHits: 0, contentHits: 0, error: e.message };
+    }
+    clearRuleTestHighlights();
+    ensureRuleTestStyle();
+    let scanned = 0;
+    let nameHits = 0;
+    let contentHits = 0;
+    let failed = 0;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      try {
+        scanned += 1;
+        const nameEl = art.querySelector('[data-testid="User-Name"]');
+        const { displayName, fullText, textEl } = articleRuleTestText(art);
+        const hitName = !!(nameRe && nameRe.test(displayName));
+        const hitContent = !!(contentRe && contentRe.test(fullText));
+        if (!hitName && !hitContent) return;
+        art.classList.add('xfs-rule-test-hit');
+        if (hitName) {
+          nameHits += 1;
+          nameEl?.classList.add('xfs-rule-test-name');
+        }
+        if (hitContent) {
+          contentHits += 1;
+          (textEl || art).classList.add('xfs-rule-test-content');
+        }
+      } catch (_) {
+        failed += 1;
+      }
+    });
+    return { scanned, nameHits, contentHits, failed, error: '' };
+  }
+
+  function runNameRuleTest(nameRaw) {
+    return runRuleTest(nameRaw, '');
+  }
+
+  function runContentRuleTest(contentRaw) {
+    return runRuleTest('', contentRaw);
+  }
+
   const HIDE_RULE_STATS_KEY = 'hide_rule_hit_stats_v1';
   const HIDE_RULE_TYPE_LABELS = {
     name: '用户名关键词',
@@ -2105,6 +2209,7 @@
       showToast('关键词命中统计已清空', false);
     };
     const close = document.createElement('button');
+    close.type = 'button';
     close.textContent = '×';
     close.style.cssText = `border:none;background:transparent;color:${C.sub};font-size:18px;line-height:1;cursor:pointer;padding:0 4px;`;
     close.onclick = () => panel.remove();
@@ -3156,10 +3261,10 @@
   }
 
   // ── Floating icon buttons ────────────────────────────────────────────
-  // Magnifying glass with crosshair: "targeted scan"
   // User with minus: "block all from likes/retweets/followers list"
   const LIST_SVG      = '👤';  // bulk block from likes/retweets/followers list
   const SCAN_SVG      = '🔍';  // targeted scan current page
+  const BLOCK_SCAN_SVG = '🚫'; // targeted content block current page
   const SWEEP_SVG     = '⚡';  // sweep all replies
   const DONE_SVG      = '✓';  // cleanup complete, click to reload
   const MUTE_SVG      = '🔇';  // mute selected word
@@ -3627,7 +3732,7 @@
   }
 
   function resetContentCleanupButtonsIfComplete() {
-    resetCompleteButton('xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动拉黑', C.blockRed, autoLoadAndScan);
+    resetCompleteButton('xfs-btn', BLOCK_SCAN_SVG, '当前视图内容垃圾号自动拉黑', C.blockRed, autoLoadAndScan);
     resetCompleteButton('xfs-sweep-btn', SWEEP_SVG, '整页回复内容垃圾号一网打尽', C.nameKw, () => {
       if (sweepHasRun) {
         sessionStorage.setItem('xfs-auto-sweep', location.pathname);
@@ -3641,6 +3746,171 @@
 
   function closeToolsPanel() {
     document.getElementById('xfs-tools-panel')?.remove();
+  }
+
+  function closeRuleTestPanel() {
+    document.getElementById('xfs-rule-test-panel')?.remove();
+    clearRuleTestHighlights();
+  }
+
+  function showRuleTestPanel() {
+    document.getElementById('xfs-rule-test-panel')?.remove();
+    const p = document.createElement('div');
+    p.id = 'xfs-rule-test-panel';
+    p.style.cssText = [
+      'position:fixed', `right:${toolbarRightPx(40)}`, 'top:92px',
+      'width:min(360px, calc(100vw - 24px))', 'max-height:calc(100vh - 112px)',
+      'overflow:auto', 'padding:10px',
+      'background:rgba(255,255,255,0.97)',
+      'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
+      `border:1px solid ${C.btnBorder}`, 'border-radius:8px',
+      'box-shadow:0 4px 18px rgba(0,0,0,0.18)',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      `color:${C.text}`, 'font-size:12px',
+      'display:flex', 'flex-direction:column', 'gap:9px',
+      'z-index:2147483647',
+    ].join(';');
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const title = document.createElement('div');
+    title.textContent = '正则测试';
+    title.style.cssText = `flex:1;font-size:13px;font-weight:800;color:${C.text};`;
+    const close = document.createElement('button');
+    close.textContent = '×';
+    close.title = '关闭';
+    close.style.cssText = `border:none;background:transparent;color:${C.sub};font-size:18px;line-height:1;cursor:pointer;padding:0 4px;`;
+    close.onclick = closeRuleTestPanel;
+    hdr.appendChild(title);
+    hdr.appendChild(close);
+    p.appendChild(hdr);
+
+    function mkField(labelText, exampleText, placeholder) {
+      const wrap = document.createElement('label');
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      const label = document.createElement('span');
+      label.textContent = labelText;
+      label.style.cssText = `font-size:11px;font-weight:700;color:${C.sub};`;
+      const example = document.createElement('button');
+      example.type = 'button';
+      example.textContent = `例：${exampleText}`;
+      example.style.cssText = `border:none;background:transparent;color:${C.regexKw};font-size:10px;cursor:pointer;padding:0;text-align:left;`;
+      row.appendChild(label);
+      row.appendChild(example);
+      const input = document.createElement('textarea');
+      input.rows = 2;
+      input.placeholder = placeholder;
+      input.spellcheck = false;
+      input.style.cssText = [
+        `border:1px solid ${C.btnBorder}`, 'border-radius:8px',
+        'padding:7px 8px', 'font-size:12px', 'line-height:1.35',
+        `color:${C.text}`, 'background:#fff', 'resize:vertical',
+        'min-height:42px', 'outline:none',
+        `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`,
+      ].join(';');
+      example.onclick = () => {
+        input.value = exampleText;
+        input.focus();
+      };
+      wrap.appendChild(row);
+      wrap.appendChild(input);
+      return { wrap, input };
+    }
+
+    const nameField = mkField('用户名正则', '\\u{1F1E8}\\u{1F1F3}', '+ 用户名正则');
+    const contentField = mkField('内容正则', '想找个|哥哥', '+ 内容正则');
+    p.appendChild(nameField.wrap);
+    p.appendChild(contentField.wrap);
+
+    const nameStatus = document.createElement('div');
+    nameStatus.textContent = '用户名待测试';
+    nameStatus.style.cssText = `min-height:16px;font-size:11px;color:${C.sub};line-height:1.35;`;
+    const contentStatus = document.createElement('div');
+    contentStatus.textContent = '内容待测试';
+    contentStatus.style.cssText = nameStatus.style.cssText;
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    const testNameBtn = document.createElement('button');
+    testNameBtn.type = 'button';
+    testNameBtn.textContent = '测试用户名';
+    testNameBtn.style.cssText = `flex:1;background:${C.nameKw};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;`;
+    const testContentBtn = document.createElement('button');
+    testContentBtn.type = 'button';
+    testContentBtn.textContent = '测试内容';
+    testContentBtn.style.cssText = `flex:1;background:${C.blockRed};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;`;
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.textContent = '关闭';
+    clearBtn.style.cssText = `background:#fff;color:${C.sub};border:1px solid ${C.btnBorder};border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;`;
+    clearBtn.onclick = closeRuleTestPanel;
+
+    function applyRuleTestResult(result, statusEl, label, hitCount) {
+      if (result.error) {
+        statusEl.textContent = result.error;
+        statusEl.style.color = C.blockRed;
+        return;
+      }
+      statusEl.textContent = `${label}：已扫 ${result.scanned} 条 · 命中 ${hitCount}${result.failed ? ` · 跳过 ${result.failed}` : ''}`;
+      statusEl.style.color = hitCount ? C.regexKw : C.sub;
+      showToast(`正则测试：${label}命中 ${hitCount}`, false);
+    }
+
+    testNameBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      const nameRaw = nameField.input.value.trim();
+      if (!nameRaw) {
+        nameStatus.textContent = '请输入用户名正则';
+        nameStatus.style.color = C.blockRed;
+        return;
+      }
+      nameStatus.textContent = '正在测试用户名...';
+      nameStatus.style.color = C.sub;
+      let result;
+      try {
+        result = runNameRuleTest(nameRaw);
+      } catch (err) {
+        const msg = err?.message || String(err || 'unknown error');
+        nameStatus.textContent = `测试失败：${msg}`;
+        nameStatus.style.color = C.blockRed;
+        showToast(`正则测试失败：${msg}`, true);
+        return;
+      }
+      applyRuleTestResult(result, nameStatus, '用户名', result.nameHits);
+    };
+
+    testContentBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      const contentRaw = contentField.input.value.trim();
+      if (!contentRaw) {
+        contentStatus.textContent = '请输入内容正则';
+        contentStatus.style.color = C.blockRed;
+        return;
+      }
+      contentStatus.textContent = '正在测试内容...';
+      contentStatus.style.color = C.sub;
+      let result;
+      try {
+        result = runContentRuleTest(contentRaw);
+      } catch (err) {
+        const msg = err?.message || String(err || 'unknown error');
+        contentStatus.textContent = `测试失败：${msg}`;
+        contentStatus.style.color = C.blockRed;
+        showToast(`正则测试失败：${msg}`, true);
+        return;
+      }
+      applyRuleTestResult(result, contentStatus, '内容', result.contentHits);
+    };
+    actions.appendChild(testNameBtn);
+    actions.appendChild(testContentBtn);
+    actions.appendChild(clearBtn);
+    p.appendChild(nameStatus);
+    p.appendChild(contentStatus);
+    p.appendChild(actions);
+    document.body.appendChild(p);
   }
 
   function showCategoryHelp() {
@@ -3907,10 +4177,18 @@
     statsBtn.style.borderColor = C.suspect;
     statsBtn.style.color = C.suspect;
     statsBtn.title = '查看每条关键词和正则累计命中并隐藏了多少次回复';
+    const ruleTestBtn = mkToolBtn('正则测试', () => {
+      closeToolsPanel();
+      showRuleTestPanel();
+    });
+    ruleTestBtn.style.borderColor = C.regexKw;
+    ruleTestBtn.style.color = C.regexKw;
+    ruleTestBtn.title = '临时测试用户名和内容正则，不写入规则';
     remoteWrap.style.gridRow = 'span 4';
     youngWrap.style.gridRow = 'span 4';
     p.appendChild(editBtn);
     p.appendChild(statsBtn);
+    p.appendChild(ruleTestBtn);
     grid.appendChild(autoReferralBtn);
     grid.appendChild(verifiedProtectBtn);
     grid.appendChild(remoteWrap);
@@ -4371,7 +4649,7 @@
     }
     if (!document.getElementById('xfs-btn')) {
       document.body.appendChild(mkIconBtn(
-        'xfs-btn', SCAN_SVG, '当前视图内容垃圾号自动拉黑', 360, C.blockRed, autoLoadAndScan));
+        'xfs-btn', BLOCK_SCAN_SVG, '当前视图内容垃圾号自动拉黑', 360, C.blockRed, autoLoadAndScan));
     }
     if (!document.getElementById('xfs-sweep-btn')) {
       document.body.appendChild(mkIconBtn(
