@@ -1,14 +1,16 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-09.1",
-  "updatedAt": "2026-05-09T00:00:00Z",
+  "rulesVersion": "2026-05-11.3",
+  "updatedAt": "2026-05-11T00:00:00Z",
   "contentKeywords": [],
   "nameKeywords": [
     "电报",
     "萢",
     "涩播",
     "免费",
-    "返佣"
+    "返佣",
+    "兄妹",
+    "主页"
   ],
   "regexKeywords": [
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,200}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){4,})(?=[\\s\\S]*(\\p{Extended_Pictographic}|\\p{Emoji_Presentation})[\\s\\S]*(?!\\1)(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]+",
