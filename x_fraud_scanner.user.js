@@ -29,22 +29,7 @@
   // Strange characters for decorative spam: Unicode symbols only. Punctuation, including CJK/fullwidth punctuation, is intentionally excluded.
   const DECOR_SYMBOL_SRC = `(?!(?:${NON_FACE_EMOJI_SRC}))\\p{S}`;
   const DECOR_SYMBOL_RUN_SRC = `(?:${DECOR_SYMBOL_SRC})+`;
-  const DEFAULT_SUSPECT_KWS      = ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big bro', 'big brother', 'little bro', '单男', '第一骚', '小m', '男大弟弟', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场', '同城的哥哥', '⬆️', '🍓'];
-  // Text keywords matched against display name (dynamic, can add/remove in panel)
-  const DEFAULT_SUSPECT_NAME_KWS = ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费', '无偿', '搭子', '反差', '护士', '高中生', '🌸🌸'];
-  // RegEx patterns matched against display name and tweet body (stored as strings, compiled at match time)
-  // Preset: @handle followed by blank lines then an upward arrow — classic spam referral pattern
-  const DEFAULT_SUSPECT_RE_KWS   = [
-    '^@\\w+\\n+[⬆↑⇑]',
-    '👉\\s*@\\w',
-    '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
-    '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
-    '(?=[\\s\\S]*不行了)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
-    '(?=[\\s\\S]*主页)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
-    `(?:${NON_FACE_EMOJI_SRC}\\s*){3,}`,
-    `(?:${DECOR_SYMBOL_RUN_SRC}\\s*(?:${NON_FACE_EMOJI_SRC}\\s*){2,}|(?:${NON_FACE_EMOJI_SRC}\\s*){2,}${DECOR_SYMBOL_RUN_SRC})`,
-    '[\\u02B0-\\u02FF\\u1D2C-\\u1D7F\\u1D80-\\u1DBF\\u2070-\\u209F]{3,}',
-  ];
+  const { content: DEFAULT_SUSPECT_KWS, name: DEFAULT_SUSPECT_NAME_KWS, regex: DEFAULT_SUSPECT_RE_KWS } = buildDefaultSuspectPresets();
   const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
   const GREASYFORK_URL = 'https://greasyfork.org/en/scripts/573991-x-fraud-scanner-%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E4%B8%80%E6%89%AB%E7%A9%BA';
   const REMOTE_RULES_FETCH_INTERVAL = 60 * 60 * 1000;
@@ -1710,6 +1695,25 @@
 
   function runContentRuleTest(contentRaw) {
     return runRuleTest('', contentRaw);
+  }
+
+  function buildDefaultSuspectPresets() {
+    return {
+      content: ['线下', '真人', '主人', '附近的吗', 'dd', '搭子', '固炮', '蹲个', '在线找', '快来', 'big bro\'', 'big bro', 'big brother', 'little bro', '单男', '第一骚', '小m', '男大弟弟', 'pan.quark.cn', 'drive.uc.cn', 'pan.xunlei.com', '离得近的', '万达广场', '同城的哥哥', '⬆️', '🍓'],
+      name: ['同城', '单身', '刺激', '母狗', '巨乳', '女大', '男大', '真人', '互关fo', '🅱️', '真实', '互关', '全国', '🍑', '🍆', '💯', '费破', '👠', '骚', '熟女', '单男', '少妇', '线下', '🍓', '💊', '约炮', '痒', '固炮', '免费', '无偿', '搭子', '反差', '护士', '高中生', '🌸🌸'],
+      // Preset regex rules matched against display name and tweet body.
+      regex: [
+        '^@\\w+\\n+[⬆↑⇑]',
+        '👉\\s*@\\w',
+        '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
+        '(?=[\\s\\S]*比[\\s\\S]{0,8}她)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
+        '(?=[\\s\\S]*不行了)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)[\\s\\S]{1,280}',
+        '(?=[\\s\\S]*主页)(?=[\\s\\S]*@[A-Za-z0-9_]{1,15}\\b)(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]{1,280}',
+        `(?:${NON_FACE_EMOJI_SRC}\\s*){3,}`,
+        `(?:${DECOR_SYMBOL_RUN_SRC}\\s*(?:${NON_FACE_EMOJI_SRC}\\s*){2,}|(?:${NON_FACE_EMOJI_SRC}\\s*){2,}${DECOR_SYMBOL_RUN_SRC})`,
+        '[\\u02B0-\\u02FF\\u1D2C-\\u1D7F\\u1D80-\\u1DBF\\u2070-\\u209F]{3,}',
+      ],
+    };
   }
 
   const HIDE_RULE_STATS_KEY = 'hide_rule_hit_stats_v1';
@@ -3429,6 +3433,13 @@
     updateReferralBadge();
   }
 
+  function shouldSkipReferralScan(art, handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return true;
+    if (matchedUsersCache.has(key)) return true;
+    return !!(art && art.dataset.xfsHideMatched === '1');
+  }
+
   function scheduleReferralCheck(art, handle, isOP = false, hintText = '') {
     if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
     const key = normalizeHandle(handle);
@@ -3436,6 +3447,12 @@
       art.dataset.xfsReferralAccount = '0';
       art.dataset.xfsReferralQueued = '0';
       if (isProtectedVerifiedArticle(art)) clearProtectedVerifiedArticleState(art);
+      return;
+    }
+    if (shouldSkipReferralScan(art, key)) {
+      art.dataset.xfsReferralHandle = key;
+      art.dataset.xfsReferralAccount = '0';
+      art.dataset.xfsReferralQueued = '0';
       return;
     }
     art.dataset.xfsReferralHandle = key;
@@ -3483,6 +3500,7 @@
   async function scanReferralAccountsInView() {
     if (!beginScanMode('referral')) return;
     let handedOffToBlocker = false;
+    const skippedMatchedHandles = new Set();
     const progress = showProgressToast('导流号扫描已开始，正在读取当前回复...', C.referralHot);
     try {
       const domReferralHandles = captureReferralAccountsFromProfileDom(document);
@@ -3492,6 +3510,10 @@
       const rememberHandle = (handle, displayName = '') => {
         const key = normalizeHandle(handle);
         if (!key || blockedHandles.has(key) || isProtectedVerifiedHandle(key)) return;
+        if (matchedUsersCache.has(key)) {
+          skippedMatchedHandles.add(key);
+          return;
+        }
         if (displayName) displayNames.set(key, displayName);
         if (!handles.includes(key)) handles.push(key);
       };
@@ -3505,11 +3527,17 @@
         const key = normalizeHandle(handle);
         const displayName = key ? extractDisplayNameFromArticle(art, key) : '';
         if (key) rememberReferralIntentHint(key, displayName);
+        if (shouldSkipReferralScan(art, key)) {
+          skippedMatchedHandles.add(key);
+          return;
+        }
         rememberHandle(key, displayName);
       });
       domReferralHandles.forEach(handle => rememberHandle(handle));
       if (handles.length === 0) {
-        progress.update('当前视图没有可扫描的回复用户');
+        progress.update(skippedMatchedHandles.size > 0
+          ? `当前视图没有可扫描的回复用户，已跳过 ${skippedMatchedHandles.size} 个已标记垃圾号`
+          : '当前视图没有可扫描的回复用户');
         progress.close(1200);
         return;
       }
