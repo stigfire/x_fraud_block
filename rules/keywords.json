@@ -5,7 +5,8 @@
   "contentKeywords": [],
   "nameKeywords": [
     "电报",
-    "萢"
+    "萢",
+    "涩播"
   ],
   "regexKeywords": [
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,200}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){4,})(?=[\\s\\S]*(\\p{Extended_Pictographic}|\\p{Emoji_Presentation})[\\s\\S]*(?!\\1)(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))[\\s\\S]+",
