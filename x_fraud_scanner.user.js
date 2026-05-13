@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.87
+// @version      5.88
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -3116,11 +3116,13 @@
     try {
       stopBackgroundLoad = true;
       const btn = document.getElementById('xfs-btn');
+      reapplyContentRulesForVisible();
       showPanel(scanPage(), {
         autoBlock: true,
         refreshButtonIds: ['xfs-btn'],
         onBlockDone: (stats) => {
           endScanMode('content');
+          reapplyContentRulesForVisible();
           applyHideAll(); // preserve any existing hidden state after blocking
           if (btn && (!stats || stats.done + stats.failed === 0)) {
             btn.disabled = false;
