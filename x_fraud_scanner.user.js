@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.86
+// @version      5.87
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -14,6 +14,7 @@
 // @grant        GM_setValue
 // @connect      x.com
 // @connect      raw.githubusercontent.com
+// @connect      api.github.com
 // @run-at       document-start
 // ==/UserScript==
 
@@ -31,6 +32,7 @@
   const DECOR_SYMBOL_RUN_SRC = `(?:${DECOR_SYMBOL_SRC})+`;
   const { content: DEFAULT_SUSPECT_KWS, name: DEFAULT_SUSPECT_NAME_KWS, regex: DEFAULT_SUSPECT_RE_KWS } = buildDefaultSuspectPresets();
   const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
+  const REMOTE_RULES_API_URL = 'https://api.github.com/repos/stigfire/x_fraud_block/contents/rules/keywords.json?ref=main';
   const GREASYFORK_URL = 'https://greasyfork.org/en/scripts/573991-x-fraud-scanner-%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E4%B8%80%E6%89%AB%E7%A9%BA';
   const REMOTE_RULES_FETCH_INTERVAL = 60 * 60 * 1000;
   const REMOTE_RULES_MAX_BYTES = 100 * 1024;
@@ -350,33 +352,52 @@
     showPanel(scanPage(), { keywordsOpen: kwBar.style.display !== 'none' });
   }
 
-  function requestRemoteRulesPayload() {
+  function decodeBase64Utf8(base64) {
+    const clean = String(base64 || '').replace(/\s+/g, '');
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  function requestRemoteRulesText(url, headers = {}) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'GET',
-        url: `${REMOTE_RULES_URL}?t=${Date.now()}`,
-        headers: { accept: 'application/json' },
+        url,
+        headers,
         timeout: 15000,
         onload(resp) {
           if (resp.status < 200 || resp.status >= 300) {
             reject(new Error(`HTTP ${resp.status}`));
             return;
           }
-          const text = String(resp.responseText || '');
-          if (text.length > REMOTE_RULES_MAX_BYTES) {
-            reject(new Error('remote rules file too large'));
-            return;
-          }
-          try {
-            resolve(JSON.parse(text));
-          } catch (e) {
-            reject(e);
-          }
+          resolve(String(resp.responseText || ''));
         },
         onerror() { reject(new Error('network error')); },
         ontimeout() { reject(new Error('timeout')); },
       });
     });
+  }
+
+  async function requestRemoteRulesPayload() {
+    try {
+      const apiText = await requestRemoteRulesText(`${REMOTE_RULES_API_URL}&t=${Date.now()}`, {
+        accept: 'application/vnd.github+json',
+      });
+      const apiPayload = JSON.parse(apiText);
+      const decoded = decodeBase64Utf8(apiPayload?.content || '');
+      if (decoded.length > REMOTE_RULES_MAX_BYTES) throw new Error('remote rules file too large');
+      return JSON.parse(decoded);
+    } catch (apiError) {
+      console.warn('[XFS] remote rules API fetch failed, falling back to raw:', apiError);
+    }
+
+    const text = await requestRemoteRulesText(`${REMOTE_RULES_URL}?t=${Date.now()}`, {
+      accept: 'application/json',
+    });
+    if (text.length > REMOTE_RULES_MAX_BYTES) throw new Error('remote rules file too large');
+    return JSON.parse(text);
   }
 
   async function refreshRemoteRules(opts = {}) {
