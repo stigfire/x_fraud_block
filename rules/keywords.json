@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-13.3",
-  "updatedAt": "2026-05-13T00:00:00Z",
+  "rulesVersion": "2026-05-14.1",
+  "updatedAt": "2026-05-14T00:00:00Z",
   "contentKeywords": [],
   "nameKeywords": [
     "电报",
@@ -25,5 +25,8 @@
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{8,120}(?![\\s\\S]))(?:[\\s\\S]{0,2}(?:\\p{Extended_Pictographic}|\\p{S}|[\\u27C0-\\u2BFF]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,}[\\s\\S]{0,2}",
     "content:^(?=.{1,9}$)(?!.*\\p{Script=Han})(?=.*[\\p{Extended_Pictographic}])(?=.*[!-~])(?:[\\p{Extended_Pictographic}\\uFE0F\\u200D]|[!-~])+$"
+  ],
+  "hideOnlyRegexKeywords": [
+    "content:^[!-~]$"
   ]
 }

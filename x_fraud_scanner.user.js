@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      5.88
+// @version      6.13
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -16,6 +16,8 @@
 // @connect      raw.githubusercontent.com
 // @connect      api.github.com
 // @run-at       document-start
+// @downloadURL https://update.greasyfork.org/scripts/573991/%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E5%A4%A7%E6%89%AB%E9%99%A4.user.js
+// @updateURL https://update.greasyfork.org/scripts/573991/%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E5%A4%A7%E6%89%AB%E9%99%A4.meta.js
 // ==/UserScript==
 
 (function () {
@@ -31,6 +33,7 @@
   const DECOR_SYMBOL_SRC = `(?!(?:${NON_FACE_EMOJI_SRC}))\\p{S}`;
   const DECOR_SYMBOL_RUN_SRC = `(?:${DECOR_SYMBOL_SRC})+`;
   const { content: DEFAULT_SUSPECT_KWS, name: DEFAULT_SUSPECT_NAME_KWS, regex: DEFAULT_SUSPECT_RE_KWS } = buildDefaultSuspectPresets();
+  const DEFAULT_HIDE_ONLY_RE_KWS = [];
   const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
   const REMOTE_RULES_API_URL = 'https://api.github.com/repos/stigfire/x_fraud_block/contents/rules/keywords.json?ref=main';
   const GREASYFORK_URL = 'https://greasyfork.org/en/scripts/573991-x-fraud-scanner-%E5%9E%83%E5%9C%BE%E6%8E%A8%E5%8F%B7%E4%B8%80%E6%89%AB%E7%A9%BA';
@@ -40,6 +43,7 @@
     content: 300,
     name: 300,
     regex: 80,
+    hideOnlyRegex: 80,
     keywordLen: 120,
     regexLen: 500,
   };
@@ -97,6 +101,7 @@
       contentKeywords: _limitRemoteList(_remoteArray(obj, 'contentKeywords'), REMOTE_RULE_LIMITS.content, REMOTE_RULE_LIMITS.keywordLen),
       nameKeywords: _limitRemoteList(_remoteArray(obj, 'nameKeywords'), REMOTE_RULE_LIMITS.name, REMOTE_RULE_LIMITS.keywordLen),
       regexKeywords: _limitRemoteList(_remoteArray(obj, 'regexKeywords'), REMOTE_RULE_LIMITS.regex, REMOTE_RULE_LIMITS.regexLen, true),
+      hideOnlyRegexKeywords: _limitRemoteList(_remoteArray(obj, 'hideOnlyRegexKeywords'), REMOTE_RULE_LIMITS.hideOnlyRegex, REMOTE_RULE_LIMITS.regexLen, true),
     };
     return {
       schemaVersion: Number(obj.schemaVersion) || 1,
@@ -109,7 +114,7 @@
   function loadRemoteRulesCache() {
     try {
       const cached = sanitizeRemoteRulesPayload(GM_getValue('remote_rules_cache', null));
-      const total = cached.rules.contentKeywords.length + cached.rules.nameKeywords.length + cached.rules.regexKeywords.length;
+      const total = cached.rules.contentKeywords.length + cached.rules.nameKeywords.length + cached.rules.regexKeywords.length + cached.rules.hideOnlyRegexKeywords.length;
       remoteRulesCache = total > 0 || cached.rulesVersion ? cached : null;
     } catch (_) {
       remoteRulesCache = null;
@@ -121,6 +126,7 @@
     if (key === 'suspect_kws') return remoteRulesCache.rules.contentKeywords || [];
     if (key === 'suspect_name_kws') return remoteRulesCache.rules.nameKeywords || [];
     if (key === 'suspect_re_kws') return remoteRulesCache.rules.regexKeywords || [];
+    if (key === 'hide_only_re_kws') return remoteRulesCache.rules.hideOnlyRegexKeywords || [];
     return [];
   }
   function _combinedDefaults(defaults, key) {
@@ -153,15 +159,18 @@
   let SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
   let SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
   let SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+  let HIDE_ONLY_RE_KWS = _loadKws(DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
   function reloadKws() {
     SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
     SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+    HIDE_ONLY_RE_KWS = _loadKws(DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
   }
   function saveKws() {
     _saveKwSet(SUSPECT_KWS,      DEFAULT_SUSPECT_KWS,      'suspect_kws');
     _saveKwSet(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     _saveKwSet(SUSPECT_RE_KWS,   DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
+    _saveKwSet(HIDE_ONLY_RE_KWS, DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
   }
   let regexCacheKey = '';
   let regexCache = [];
@@ -206,6 +215,7 @@
       contentKeywordAdditions: _kwAdditions(SUSPECT_KWS, DEFAULT_SUSPECT_KWS),
       nameKeywordAdditions: _kwAdditions(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS),
       regexKeywordAdditions: _kwAdditions(SUSPECT_RE_KWS, DEFAULT_SUSPECT_RE_KWS),
+      hideOnlyRegexKeywordAdditions: _kwAdditions(HIDE_ONLY_RE_KWS, DEFAULT_HIDE_ONLY_RE_KWS),
     };
     const text = JSON.stringify(payload, null, 2);
     const ok = await copyText(text);
@@ -230,6 +240,7 @@
       content: _cleanImportList(_arrFromImport(obj, 'contentKeywordAdditions', 'contentKeywords', 'content')),
       name: _cleanImportList(_arrFromImport(obj, 'nameKeywordAdditions', 'nameKeywords', 'name')),
       regex: _cleanImportList(_arrFromImport(obj, 'regexKeywordAdditions', 'regexKeywords', 'regex')),
+      hideOnlyRegex: _cleanImportList(_arrFromImport(obj, 'hideOnlyRegexKeywordAdditions', 'hideOnlyRegexKeywords', 'hideOnlyRegex')),
     };
   }
   function _mergeKws(live, incoming) {
@@ -250,7 +261,7 @@
       showToast('自定义关键词 JSON 解析失败', true);
       return;
     }
-    const total = parsed.content.length + parsed.name.length + parsed.regex.length;
+    const total = parsed.content.length + parsed.name.length + parsed.regex.length + parsed.hideOnlyRegex.length;
     if (total === 0) {
       showToast('未发现可导入的自定义关键词', true);
       return;
@@ -261,10 +272,12 @@
       SUSPECT_KWS = _replaceCustomKws(SUSPECT_KWS, DEFAULT_SUSPECT_KWS, parsed.content);
       SUSPECT_NAME_KWS = _replaceCustomKws(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS, parsed.name);
       SUSPECT_RE_KWS = _replaceCustomKws(SUSPECT_RE_KWS, DEFAULT_SUSPECT_RE_KWS, parsed.regex);
+      HIDE_ONLY_RE_KWS = _replaceCustomKws(HIDE_ONLY_RE_KWS, DEFAULT_HIDE_ONLY_RE_KWS, parsed.hideOnlyRegex);
     } else {
       SUSPECT_KWS = _mergeKws(SUSPECT_KWS, parsed.content);
       SUSPECT_NAME_KWS = _mergeKws(SUSPECT_NAME_KWS, parsed.name);
       SUSPECT_RE_KWS = _mergeKws(SUSPECT_RE_KWS, parsed.regex);
+      HIDE_ONLY_RE_KWS = _mergeKws(HIDE_ONLY_RE_KWS, parsed.hideOnlyRegex);
     }
     saveKws();
     showToast(`已导入 ${total} 个自定义关键词`);
@@ -279,14 +292,15 @@
     const c = remoteRulesCache.rules.contentKeywords.length;
     const n = remoteRulesCache.rules.nameKeywords.length;
     const r = remoteRulesCache.rules.regexKeywords.length;
+    const hr = remoteRulesCache.rules.hideOnlyRegexKeywords.length;
     const ver = remoteRulesCache.rulesVersion ? ` · ${remoteRulesCache.rulesVersion}` : '';
-    return `内容 ${c} / 用户名 ${n} / 正则 ${r}${ver}`;
+    return `内容 ${c} / 用户名 ${n} / 正则 ${r} / 只隐藏正则 ${hr}${ver}`;
   }
 
   function remoteRulesTotal(cache) {
     const rules = cache?.rules;
     if (!rules) return 0;
-    return rules.contentKeywords.length + rules.nameKeywords.length + rules.regexKeywords.length;
+    return rules.contentKeywords.length + rules.nameKeywords.length + rules.regexKeywords.length + rules.hideOnlyRegexKeywords.length;
   }
 
   function diffRemoteRuleList(prevList, nextList) {
@@ -318,6 +332,7 @@
       ['contentKeywords'],
       ['nameKeywords'],
       ['regexKeywords'],
+      ['hideOnlyRegexKeywords'],
     ].forEach(([key]) => {
       const diff = diffRemoteRuleList(prevCache.rules[key], nextCache.rules[key]);
       out.added += diff.added;
@@ -349,6 +364,8 @@
     const panel = document.getElementById('xfs-panel');
     const kwBar = document.getElementById('xfs-kw-bar');
     if (!panel || !kwBar) return;
+    if (panel.dataset.xfsGlobalQueueView === '1') return;
+    if (panelDockedActive || panel.style.display === 'none' || document.getElementById('xfs-panel-dock')) return;
     showPanel(scanPage(), { keywordsOpen: kwBar.style.display !== 'none' });
   }
 
@@ -443,6 +460,31 @@
   const MAX_BLOCK  = 100;
   const BLOCK_DELAY  = 3000; // base inter-block gap (ms)
   const BLOCK_JITTER = 2000; // random extra added to base, making effective range 3-5s
+  const EXPERIMENT_BLOCK_DELAY = 15000;
+  const EXPERIMENT_BLOCK_JITTER = 5000;
+  const EXPERIMENT_BROWSE_BLOCK_KEY = 'experimental_browse_block_v1';
+  const EXPERIMENT_BROWSE_BLOCK_TIMING_KEY = 'experimental_browse_block_timing_v1';
+  const EXPERIMENT_BROWSE_BLOCK_HEARTBEAT_STALE = 5 * 60 * 1000;
+  const EXPERIMENT_BROWSE_BLOCK_MAX_AGE = 24 * 60 * 60 * 1000;
+  const GLOBAL_BLOCK_QUEUE_KEY = 'global_block_queue_v1';
+  const GLOBAL_BLOCK_QUEUE_LOCK_KEY = 'global_block_queue_worker_lock_v1';
+  const GLOBAL_BLOCK_QUEUE_PAUSED_KEY = 'global_block_queue_paused_v1';
+  const GLOBAL_BLOCK_QUEUE_PAUSE_REASON_KEY = 'global_block_queue_pause_reason_v1';
+  const GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY = 'global_block_queue_minimized_v1';
+  const GLOBAL_BLOCK_QUEUE_POS_KEY = 'global_block_queue_position_v1';
+  const GLOBAL_BLOCK_QUEUE_SHOW_DONE_KEY = 'global_block_queue_show_done_v1';
+  const GLOBAL_BLOCK_QUEUE_ROUND_KEY = 'global_block_queue_round_v1';
+  const GLOBAL_BLOCK_QUEUE_LOCK_TTL = 15000;
+  const GLOBAL_BLOCK_QUEUE_DONE_MAX = 300;
+  const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY = 20;
+  const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN = 30000;
+  const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_JITTER = 15000;
+  const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY = 60;
+  const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN = 5 * 60 * 1000;
+  const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_JITTER = 60 * 1000;
+  const GLOBAL_BLOCK_QUEUE_PANEL_W = 136;
+  const RESULT_PANEL_POS_KEY = 'xfs_result_panel_position_v1';
+  const RESULT_PANEL_DOCK_POS_KEY = 'xfs_result_panel_dock_position_v1';
   // Low-follower hiding is intentionally disabled for now. It produced more
   // false positives than profile-link based referral detection, but the old
   // threshold constant is kept here as a note for possible future scoring.
@@ -455,6 +497,17 @@
   const REFERRAL_FAILURE_TTL = 30 * 60 * 1000;
   const REFERRAL_MAX_CACHE = 1200;
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const EXPERIMENT_TIMING_DEFAULTS = Object.freeze({
+    slowBlockingMode: false,
+    slowBlockDelayMs: EXPERIMENT_BLOCK_DELAY,
+    shortCooldownMs: GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN,
+    longCooldownMs: GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN,
+  });
+  const EXPERIMENT_TIMING_LIMITS = Object.freeze({
+    slowBlockDelayMs: { min: EXPERIMENT_BLOCK_DELAY, max: 10 * 60 * 1000 },
+    shortCooldownMs: { min: GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN, max: 30 * 60 * 1000 },
+    longCooldownMs: { min: GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN, max: 2 * 60 * 60 * 1000 },
+  });
   const YOUNG_ACCOUNT_DAY_OPTIONS = [7, 14, 30, 60, 90];
   const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
   const REFERRAL_X_LINK_GLOBAL_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/ig;
@@ -483,11 +536,104 @@
   let persistentBlockedCount = Math.max(0, parseInt(GM_getValue('persistent_blocked_count', 0), 10) || 0);
   let userLookupQueryId = GM_getValue('user_lookup_query_id', DEFAULT_USER_LOOKUP_QUERY_ID);
   let capturedApiHeaders = null;
+  const globalQueueTabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+  let globalQueueWorkerActive = false;
+  let globalQueueUiTimer = null;
+  let globalQueuePanelDragging = false;
+  let globalQueuePanelSuppressed = false;
+  let experimentalBrowseBlockHeartbeatTimer = null;
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
   const matchedUsersCache = new Map();   // handle → full user object; survives DOM unload by React virtual list
   const referralIntentHints = new Map(); // handle -> visible profile/display-name text containing referral intent
   const referralHintRefreshDone = new Set();
   const BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+
+  function clampNumber(value, min, max, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
+  }
+
+  function normalizeExperimentTimingConfig(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const next = {
+      slowBlockingMode: false,
+      slowBlockDelayMs: clampNumber(
+        src.slowBlockDelayMs,
+        EXPERIMENT_TIMING_LIMITS.slowBlockDelayMs.min,
+        EXPERIMENT_TIMING_LIMITS.slowBlockDelayMs.max,
+        EXPERIMENT_TIMING_DEFAULTS.slowBlockDelayMs
+      ),
+      shortCooldownMs: clampNumber(
+        src.shortCooldownMs,
+        EXPERIMENT_TIMING_LIMITS.shortCooldownMs.min,
+        EXPERIMENT_TIMING_LIMITS.shortCooldownMs.max,
+        EXPERIMENT_TIMING_DEFAULTS.shortCooldownMs
+      ),
+      longCooldownMs: clampNumber(
+        src.longCooldownMs,
+        EXPERIMENT_TIMING_LIMITS.longCooldownMs.min,
+        EXPERIMENT_TIMING_LIMITS.longCooldownMs.max,
+        EXPERIMENT_TIMING_DEFAULTS.longCooldownMs
+      ),
+    };
+    return next;
+  }
+
+  let experimentTimingConfig = normalizeExperimentTimingConfig(GM_getValue(EXPERIMENT_BROWSE_BLOCK_TIMING_KEY, null));
+
+  function saveExperimentTimingConfig(next) {
+    experimentTimingConfig = normalizeExperimentTimingConfig(next);
+    GM_setValue(EXPERIMENT_BROWSE_BLOCK_TIMING_KEY, experimentTimingConfig);
+    syncCurrentExperimentalCooldownTiming();
+    refreshGlobalBlockQueueDetailPanel();
+    updateGlobalBlockQueuePanel();
+    return experimentTimingConfig;
+  }
+
+  function effectiveExperimentTimingConfig() {
+    return experimentTimingConfig;
+  }
+
+  function experimentSlowBlockGapText() {
+    const timing = effectiveExperimentTimingConfig();
+    return `${formatGlobalQueueCooldown(timing.slowBlockDelayMs)}-${formatGlobalQueueCooldown(timing.slowBlockDelayMs + EXPERIMENT_BLOCK_JITTER)}`;
+  }
+
+  function experimentCooldownSummaryText() {
+    const timing = effectiveExperimentTimingConfig();
+    return `每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停 ${formatGlobalQueueCooldown(timing.shortCooldownMs)}；每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停 ${formatGlobalQueueCooldown(timing.longCooldownMs)}`;
+  }
+
+  function humanizedBoundedDelay(max, opts = {}) {
+    const cap = Math.max(0, Math.floor(Number(max) || 0));
+    if (!cap) return 0;
+    const mode = Math.min(0.95, Math.max(0.05, Number(opts.mode ?? 0.5)));
+    const hesitationChance = Math.min(0.9, Math.max(0, Number(opts.hesitationChance ?? 0.12)));
+    const tailStart = Math.min(0.98, Math.max(mode, Number(opts.tailStart ?? 0.72)));
+    const u = Math.random();
+    let ratio = 0;
+    if (u < mode) ratio = Math.sqrt(u * mode);
+    else ratio = 1 - Math.sqrt((1 - u) * (1 - mode));
+    if (Math.random() < hesitationChance) {
+      ratio = Math.max(ratio, tailStart + Math.random() * (1 - tailStart));
+    }
+    return Math.min(cap, Math.round(cap * ratio));
+  }
+
+  function syncCurrentExperimentalCooldownTiming() {
+    if (!experimentalBrowseBlockActive()) return;
+    const round = readGlobalQueueRound();
+    if (Number(round.cooldownUntil || 0) <= Date.now()) return;
+    if (!Number(round.cooldownStartedAt || 0)) return;
+    const nextCooldown = globalQueueCooldownForCount(round.count);
+    if (!nextCooldown) return;
+    writeGlobalQueueRound({
+      ...round,
+      reason: nextCooldown.reason,
+      cooldownUntil: Number(round.cooldownStartedAt || 0) + nextCooldown.ms,
+    });
+  }
 
   function maybeCaptureUserLookupQueryId(url) {
     const m = String(url || '').match(/\/i\/api\/graphql\/([^/?]+)\/UserByScreenName\b/);
@@ -1603,15 +1749,75 @@
     const heartHits  = [...new Set(displayName.match(HEART_RE) || [])];
     const nameKwHits = SUSPECT_NAME_KWS.filter(kw => stripInvisible(displayName).toLowerCase().includes(kw.toLowerCase()));
     const kwHits     = getContextSnippets(fullText, SUSPECT_KWS, CTX_LEN);
-    const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS, 'name').map(h => ({ ...h, snippet: `昵称: ${h.snippet}` }));
-    const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS, 'body');
+    const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS, 'name').map(h => ({ ...h, type: 'regex', snippet: `昵称: ${h.snippet}` }));
+    const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS, 'body').map(h => ({ ...h, type: 'regex' }));
     const reHits     = [...nameReHits, ...bodyReHits];
+    const hideOnlyReHits = getRegexHits(fullText, HIDE_ONLY_RE_KWS, 'body').map(h => ({ ...h, type: 'hide_only_regex' }));
     const cats = new Set();
+    const actionableCats = new Set();
     if (heartHits.length  > 0) cats.add('heart');
     if (nameKwHits.length > 0) cats.add('name_kw');
     if (kwHits.length     > 0) cats.add('suspect');
     if (reHits.length     > 0) cats.add('regex_kw');
-    return { matched: cats.size > 0, cats, heartHits, nameKwHits, kwHits, reHits };
+    if (hideOnlyReHits.length > 0) cats.add('hide_only_regex');
+    if (heartHits.length  > 0) actionableCats.add('heart');
+    if (nameKwHits.length > 0) actionableCats.add('name_kw');
+    if (kwHits.length     > 0) actionableCats.add('suspect');
+    if (reHits.length     > 0) actionableCats.add('regex_kw');
+    return {
+      matched: cats.size > 0,
+      actionableMatched: actionableCats.size > 0,
+      hideOnlyMatched: hideOnlyReHits.length > 0,
+      cats,
+      actionableCats,
+      heartHits,
+      nameKwHits,
+      kwHits,
+      reHits,
+      hideOnlyReHits,
+    };
+  }
+
+  function buildUserPreviewSnippet(...parts) {
+    const clean = parts
+      .map(part => stripInvisible(String(part || '')).trim())
+      .find(Boolean) || '';
+    if (!clean) return '';
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (words.length > 1) {
+      return words.slice(0, 18).join(' ') + (words.length > 18 ? '…' : '');
+    }
+    return clean.length > 90 ? `${clean.slice(0, 90)}…` : clean;
+  }
+
+  function normalizeQueuePreviewCats(cats) {
+    const allowed = new Set(['heart', 'name_kw', 'suspect', 'regex_kw', 'hide_only_regex', 'referral', 'liker']);
+    const list = Array.isArray(cats) ? cats : Array.from(cats || []);
+    return list.map(v => String(v || '')).filter(v => allowed.has(v)).slice(0, 6);
+  }
+
+  function normalizeQueueKeywordHits(list) {
+    return Array.isArray(list)
+      ? list
+        .map(hit => ({
+          kw: String(hit?.kw || '').slice(0, 80),
+          snippet: String(hit?.snippet || '').slice(0, 220),
+        }))
+        .filter(hit => hit.kw || hit.snippet)
+        .slice(0, 4)
+      : [];
+  }
+
+  function normalizeQueueRegexHits(list) {
+    return Array.isArray(list)
+      ? list
+        .map(hit => ({
+          pat: String(hit?.pat || '').slice(0, 160),
+          snippet: String(hit?.snippet || '').slice(0, 220),
+        }))
+        .filter(hit => hit.pat || hit.snippet)
+        .slice(0, 4)
+      : [];
   }
 
   function clearRuleTestHighlights() {
@@ -1742,11 +1948,13 @@
     name: '用户名关键词',
     content: '内容关键词',
     regex: '正则',
+    hide_only_regex: '只隐藏正则',
   };
   const RULE_ID_PREFIX = {
     content: 'keyword',
     name: 'name',
     regex: 'regex',
+    hide_only_regex: 'hide-re',
   };
 
   function ruleId(type, idx) {
@@ -1757,6 +1965,7 @@
     if (type === 'content') return SUSPECT_KWS;
     if (type === 'name') return SUSPECT_NAME_KWS;
     if (type === 'regex') return SUSPECT_RE_KWS;
+    if (type === 'hide_only_regex') return HIDE_ONLY_RE_KWS;
     return [];
   }
 
@@ -1771,7 +1980,7 @@
 
   function statsRuleLabel(type, key) {
     const id = currentRuleId(type, key);
-    if (type === 'regex') return id || regexRuleLabel(key);
+    if (type === 'regex' || type === 'hide_only_regex') return id || regexRuleLabel(key, type);
     return id ? `${id} · ${key}` : key;
   }
 
@@ -1793,6 +2002,7 @@
     (matchInfo.nameKwHits || []).forEach(kw => add('name', kw));
     (matchInfo.kwHits || []).forEach(hit => add('content', hit.kw));
     (matchInfo.reHits || []).forEach(hit => add('regex', hit.pat));
+    (matchInfo.hideOnlyReHits || []).forEach(hit => add('hide_only_regex', hit.pat));
     return out;
   }
 
@@ -1941,27 +2151,25 @@
       ].map(a => a.textContent).join(' ');
       const fullText = [tweetText, cardText, bodyLinkText].filter(Boolean).join(' ');
 
-      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
-      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
+      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchesFilters(displayName, fullText);
+      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       if (!matched) return;
 
       // First 10 words of tweet body — shown in panel for name/heart matches
       // to help users judge borderline cases without opening the tweet.
-      const tweetWords = tweetText.trim().split(/\s+/).filter(Boolean);
-      const tweetSnippet = tweetWords.length > 0
-        ? tweetWords.slice(0, 10).join(' ') + (tweetWords.length > 10 ? '…' : '')
-        : '';
+      const tweetSnippet = buildUserPreviewSnippet(tweetText, cardText, bodyLinkText);
 
       if (userMap.has(handle)) {
         const ex = userMap.get(handle);
-        cats.forEach(c => ex.cats.add(c));
+        actionableCats.forEach(c => ex.cats.add(c));
         heartHits.forEach(h  => { if (!ex.heartHits.includes(h))              ex.heartHits.push(h); });
         nameKwHits.forEach(h => { if (!ex.nameKwHits.includes(h))             ex.nameKwHits.push(h); });
         kwHits.forEach(h     => { if (!ex.kwHits.find(x => x.kw  === h.kw))  ex.kwHits.push(h); });
         reHits.forEach(h     => { if (!ex.reHits.find(x => x.pat === h.pat)) ex.reHits.push(h); });
+        hideOnlyReHits.forEach(h => { if (!ex.hideOnlyReHits.find(x => x.pat === h.pat)) ex.hideOnlyReHits.push(h); });
         // keep tweetSnippet from first encounter
-      } else {
-        userMap.set(handle, { handle, displayName, cats, heartHits, nameKwHits, kwHits, reHits, tweetSnippet });
+      } else if (actionableMatched) {
+        userMap.set(handle, { handle, displayName, cats: actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits, tweetSnippet });
       }
     });
 
@@ -1971,6 +2179,154 @@
   // ── Block API ─────────────────────────────────────────────────────────
   // GM_xmlhttpRequest keeps the call out of X.com's own fetch pipeline,
   // preventing any SPA-triggered page refresh on block success.
+  function blockAuthError(message) {
+    const err = new Error(message || 'Authentication lost');
+    err.xfsAuthLost = true;
+    return err;
+  }
+
+  function blockRateLimitError(message) {
+    const err = new Error(message || 'Rate limited');
+    err.xfsRateLimited = true;
+    return err;
+  }
+
+  function isBlockAuthLostError(err) {
+    return !!err?.xfsAuthLost || /\bHTTP\s*(?:401|403|419)\b|auth|login|logout|csrf|ct0/i.test(String(err?.message || err || ''));
+  }
+
+  function isBlockRateLimitError(err) {
+    return !!err?.xfsRateLimited || /\bHTTP\s*429\b|rate.?limit|too many/i.test(String(err?.message || err || ''));
+  }
+
+  function blockHttpError(status, body = '') {
+    const msg = `HTTP ${status}`;
+    const n = Number(status);
+    const err = [401, 403, 419].includes(n) ? blockAuthError(msg) : (n === 429 ? blockRateLimitError(msg) : new Error(msg));
+    err.status = status;
+    err.responseText = body;
+    return err;
+  }
+
+  function pauseGlobalQueueForAuthLoss(reason = '登录状态失效') {
+    setGlobalBlockQueuePaused(true, { reason: 'auth' });
+    const q = readGlobalBlockQueue();
+    Object.keys(q.items || {}).forEach(key => {
+      const item = q.items[key];
+      if (item?.status === 'running') q.items[key] = { ...item, status: 'queued', updatedAt: Date.now(), error: reason };
+    });
+    writeGlobalBlockQueue(q);
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    refreshGlobalQueueInlineButtons();
+    showToast(`拉黑排队已暂停：${reason}。请重新登录 X/Twitter 后再继续。`, true);
+  }
+
+  function pauseGlobalQueueForRateLimit(reason = '平台限流') {
+    setGlobalBlockQueuePaused(true, { reason: 'rate_limit' });
+    const q = readGlobalBlockQueue();
+    Object.keys(q.items || {}).forEach(key => {
+      const item = q.items[key];
+      if (item?.status === 'running') q.items[key] = { ...item, status: 'queued', updatedAt: Date.now(), error: reason };
+    });
+    writeGlobalBlockQueue(q);
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    refreshGlobalQueueInlineButtons();
+    showToast(`拉黑排队已暂停：${reason}。不是继续加长固定间隔，而是先停住，等账号状态恢复后手动继续。`, true);
+  }
+
+  function readGlobalQueueRound() {
+    const raw = GM_getValue(GLOBAL_BLOCK_QUEUE_ROUND_KEY, null);
+    return {
+      count: Math.max(0, Number(raw?.count || 0) || 0),
+      reason: String(raw?.reason || ''),
+      pausedAt: Number(raw?.pausedAt || 0) || 0,
+      cooldownStartedAt: Number(raw?.cooldownStartedAt || 0) || 0,
+      cooldownUntil: Number(raw?.cooldownUntil || 0) || 0,
+    };
+  }
+
+  function writeGlobalQueueRound(round) {
+    GM_setValue(GLOBAL_BLOCK_QUEUE_ROUND_KEY, {
+      count: Math.max(0, Number(round?.count || 0) || 0),
+      reason: String(round?.reason || ''),
+      pausedAt: Number(round?.pausedAt || 0) || 0,
+      cooldownStartedAt: Number(round?.cooldownStartedAt || 0) || 0,
+      cooldownUntil: Number(round?.cooldownUntil || 0) || 0,
+    });
+  }
+
+  function resetGlobalQueueRound() {
+    writeGlobalQueueRound({ count: 0, reason: '', pausedAt: 0, cooldownStartedAt: 0, cooldownUntil: 0 });
+  }
+
+  function globalQueueCooldownForCount(count) {
+    const timing = effectiveExperimentTimingConfig();
+    if (!count) return null;
+    if (count % GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY === 0) {
+      return {
+        ms: timing.longCooldownMs + humanizedBoundedDelay(GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_JITTER, {
+          mode: 0.68,
+          hesitationChance: 0.32,
+          tailStart: 0.82,
+        }),
+        reason: `每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停`,
+      };
+    }
+    if (count % GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY === 0) {
+      return {
+        ms: timing.shortCooldownMs + humanizedBoundedDelay(GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_JITTER, {
+          mode: 0.58,
+          hesitationChance: 0.2,
+          tailStart: 0.76,
+        }),
+        reason: `每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停`,
+      };
+    }
+    return null;
+  }
+
+  function formatGlobalQueueCooldown(ms) {
+    const sec = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+    if (sec >= 60) {
+      const min = Math.floor(sec / 60);
+      const rest = sec % 60;
+      return rest ? `${min}分${rest}秒` : `${min}分`;
+    }
+    return `${sec}秒`;
+  }
+
+  function globalQueueRoundText(round = readGlobalQueueRound()) {
+    const remaining = Number(round.cooldownUntil || 0) - Date.now();
+    return remaining > 0 ? `本轮 ${round.count} · 冷却 ${formatGlobalQueueCooldown(remaining)}` : `本轮 ${round.count}`;
+  }
+
+  async function coolDownGlobalBlockQueue(until, reason) {
+    const round = readGlobalQueueRound();
+    const cooldownUntil = Math.max(Date.now(), Number(until || 0));
+    const cooldownStartedAt = Number(round.cooldownStartedAt || 0) || Date.now();
+    writeGlobalQueueRound({ ...round, reason, cooldownStartedAt, cooldownUntil });
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    refreshGlobalQueueInlineButtons();
+    showToast(`拉黑排队冷却中：${reason}，约 ${formatGlobalQueueCooldown(cooldownUntil - Date.now())} 后自动继续`, false);
+    while (!globalBlockQueuePaused()) {
+      const latestRound = readGlobalQueueRound();
+      const remaining = Number(latestRound.cooldownUntil || 0) - Date.now();
+      if (remaining <= 0) break;
+      heartbeatGlobalBlockQueueLock();
+      updateGlobalBlockQueuePanel();
+      await sleep(Math.min(1000, remaining));
+    }
+    const latest = readGlobalQueueRound();
+    if (Number(latest.cooldownUntil || 0) <= Date.now()) {
+      writeGlobalQueueRound({ ...latest, reason: '', cooldownStartedAt: 0, cooldownUntil: 0 });
+      updateGlobalBlockQueuePanel();
+      refreshGlobalBlockQueueDetailPanel();
+    }
+  }
+
   function blockUser(handle, csrf) {
     const bearer = liveBearer || BEARER;
     console.log(`[XFS] blocking @${handle} | live=${!!liveBearer} | csrf=${csrf ? csrf.slice(0,8)+'…' : 'MISSING'}`);
@@ -1993,7 +2349,7 @@
             resolve();
           } else {
             console.error(`[XFS] FAILED @${handle} => HTTP ${resp.status}:`, resp.responseText.slice(0, 400));
-            reject(new Error(`HTTP ${resp.status}`));
+            reject(blockHttpError(resp.status, resp.responseText || ''));
           }
         },
         onerror(e) {
@@ -2010,20 +2366,619 @@
   // multiple tabs are running block operations simultaneously.
   const LS_LAST_BLOCK = 'xfs-last-block';
 
-  async function blockUserCoordinated(handle, csrf, shouldProceed) {
-    return navigator.locks.request('xfs-block-lock', async () => {
+  async function blockUserCoordinated(handle, csrf, shouldProceed, options = {}) {
+    const slow = !!options.slow;
+    const run = async () => {
       if (shouldProceed && !shouldProceed()) return { skipped: true };
-      // Jitter computed inside the lock: each block gets a fresh random gap.
+      // Jitter is computed inside the lock so each block gets a fresh, bounded,
+      // slightly humanized gap instead of a flat random interval.
       // localStorage timestamp reflects the actual gap used, so cross-tab
       // coordination sees the same effective rate regardless of which tab ran last.
-      const gap     = BLOCK_DELAY + Math.floor(Math.random() * BLOCK_JITTER);
-      const elapsed = Date.now() - parseInt(localStorage.getItem(LS_LAST_BLOCK) || '0', 10);
-      if (elapsed < gap) await sleep(gap - elapsed);
+      const jitter  = slow ? EXPERIMENT_BLOCK_JITTER : BLOCK_JITTER;
+      const randomExtra = humanizedBoundedDelay(jitter, slow
+        ? { mode: 0.52, hesitationChance: 0.22, tailStart: 0.74 }
+        : { mode: 0.38, hesitationChance: 0.1, tailStart: 0.68 });
+      const lastBlockAt = parseInt(localStorage.getItem(LS_LAST_BLOCK) || '0', 10);
+      while (true) {
+        const baseGap = slow ? effectiveExperimentTimingConfig().slowBlockDelayMs : BLOCK_DELAY;
+        const remaining = lastBlockAt + baseGap + randomExtra - Date.now();
+        if (remaining <= 0) break;
+        if (shouldProceed && !shouldProceed()) return { skipped: true };
+        await sleep(Math.min(1000, remaining));
+      }
       if (shouldProceed && !shouldProceed()) return { skipped: true };
       localStorage.setItem(LS_LAST_BLOCK, String(Date.now()));
       await blockUser(handle, csrf);
       return { skipped: false };
+    };
+    return navigator.locks?.request ? navigator.locks.request('xfs-block-lock', run) : run();
+  }
+
+  function emptyGlobalBlockQueue() {
+    return { version: 1, updatedAt: Date.now(), items: {} };
+  }
+
+  function emptyExperimentalBrowseBlockState() {
+    return { enabled: false, activatedAt: 0, expiresAt: 0, heartbeatAt: 0, prevSkipVerified: null };
+  }
+
+  function readExperimentalBrowseBlockState() {
+    const raw = GM_getValue(EXPERIMENT_BROWSE_BLOCK_KEY, null);
+    const state = raw && typeof raw === 'object' ? raw : emptyExperimentalBrowseBlockState();
+    return {
+      enabled: !!state.enabled,
+      activatedAt: Number(state.activatedAt || 0),
+      expiresAt: Number(state.expiresAt || 0),
+      heartbeatAt: Number(state.heartbeatAt || 0),
+      prevSkipVerified: typeof state.prevSkipVerified === 'boolean' ? state.prevSkipVerified : null,
+    };
+  }
+
+  function writeExperimentalBrowseBlockState(state) {
+    GM_setValue(EXPERIMENT_BROWSE_BLOCK_KEY, {
+      enabled: !!state.enabled,
+      activatedAt: Number(state.activatedAt || 0),
+      expiresAt: Number(state.expiresAt || 0),
+      heartbeatAt: Number(state.heartbeatAt || 0),
+      prevSkipVerified: typeof state.prevSkipVerified === 'boolean' ? state.prevSkipVerified : null,
     });
+  }
+
+  function disableExperimentalBrowseBlock(reason = '', opts = {}) {
+    const prev = readExperimentalBrowseBlockState().prevSkipVerified;
+    writeExperimentalBrowseBlockState(emptyExperimentalBrowseBlockState());
+    if (opts.restoreSettings !== false && typeof prev === 'boolean') {
+      skipVerifiedAccountsActive = prev;
+      GM_setValue('skip_verified_accounts', skipVerifiedAccountsActive);
+    }
+    if (experimentalBrowseBlockHeartbeatTimer) {
+      clearInterval(experimentalBrowseBlockHeartbeatTimer);
+      experimentalBrowseBlockHeartbeatTimer = null;
+    }
+    resetGlobalQueueRound();
+    document.getElementById('xfs-experiment-panel')?.remove();
+    removeExperimentKillSwitch();
+    if (opts.hideQueuePanel) {
+      globalQueuePanelSuppressed = true;
+      document.getElementById('xfs-global-block-queue')?.remove();
+    }
+    reapplyContentRulesForVisible();
+    injectInlineButtons();
+    updateGlobalBlockQueuePanel();
+    if (reason) showToast(reason, false);
+  }
+
+  function experimentalBrowseBlockActive() {
+    const state = readExperimentalBrowseBlockState();
+    if (!state.enabled) return false;
+    const now = Date.now();
+    if (state.expiresAt <= now) {
+      disableExperimentalBrowseBlock('边刷边拉黑已自动关闭：超过 24 小时');
+      return false;
+    }
+    if (state.heartbeatAt && now - state.heartbeatAt > EXPERIMENT_BROWSE_BLOCK_HEARTBEAT_STALE) {
+      disableExperimentalBrowseBlock('边刷边拉黑已自动关闭：新的浏览周期');
+      return false;
+    }
+    return true;
+  }
+
+  function enableExperimentalBrowseBlock() {
+    const now = Date.now();
+    clearProtectedVerifiedArticlesInView();
+    globalQueuePanelSuppressed = false;
+    writeExperimentalBrowseBlockState({
+      enabled: true,
+      activatedAt: now,
+      expiresAt: now + EXPERIMENT_BROWSE_BLOCK_MAX_AGE,
+      heartbeatAt: now,
+      prevSkipVerified: skipVerifiedAccountsActive,
+    });
+    skipVerifiedAccountsActive = true;
+    GM_setValue('skip_verified_accounts', true);
+    resetGlobalQueueRound();
+    startExperimentalBrowseBlockHeartbeat();
+    updateGlobalBlockQueuePanel();
+    injectExperimentKillSwitch();
+    buttonsCollapsed = false;
+    GM_setValue('buttons_collapsed', false);
+    injectBtn();
+    reapplyContentRulesForVisible();
+    injectInlineButtons();
+    showToast(`边刷边拉黑已开启：慢速排队 ${experimentSlowBlockGapText()}，会员保护已强制开启`, false);
+  }
+
+  function startExperimentalBrowseBlockHeartbeat() {
+    if (experimentalBrowseBlockHeartbeatTimer) clearInterval(experimentalBrowseBlockHeartbeatTimer);
+    if (!experimentalBrowseBlockActive()) return;
+    const current = readExperimentalBrowseBlockState();
+    current.heartbeatAt = Date.now();
+    writeExperimentalBrowseBlockState(current);
+    experimentalBrowseBlockHeartbeatTimer = setInterval(() => {
+      const state = readExperimentalBrowseBlockState();
+      if (!state.enabled || state.expiresAt <= Date.now()) {
+        disableExperimentalBrowseBlock(state.enabled ? '边刷边拉黑已自动关闭：超过 24 小时' : '');
+        return;
+      }
+      state.heartbeatAt = Date.now();
+      writeExperimentalBrowseBlockState(state);
+    }, 30000);
+  }
+
+  function maybeAutoQueueBrowseMatchedUser(user, sourceArticle) {
+    if (!experimentalBrowseBlockActive()) return;
+    const key = normalizeHandle(user?.handle);
+    if (!key || blockedHandles.has(key) || globalBlockQueueItemForHandle(key)) return;
+    if (sourceArticle && isProtectedVerifiedArticle(sourceArticle)) return;
+    const result = enqueueGlobalBlockUsers([{ ...user, handle: key, source: 'browse_auto' }], 'browse_auto');
+    if (result.added) {
+      sourceArticle?.setAttribute?.('data-xfs-auto-queued', '1');
+      showToast(`边刷边拉黑：@${key} 已加入拉黑排队`, false);
+    }
+  }
+
+  function readGlobalBlockQueue() {
+    const raw = GM_getValue(GLOBAL_BLOCK_QUEUE_KEY, null);
+    const q = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : emptyGlobalBlockQueue();
+    const items = q.items && typeof q.items === 'object' && !Array.isArray(q.items) ? q.items : {};
+    return { version: 1, updatedAt: Number(q.updatedAt || 0) || Date.now(), items };
+  }
+
+  function writeGlobalBlockQueue(q) {
+    const items = q.items && typeof q.items === 'object' ? q.items : {};
+    const done = Object.values(items)
+      .filter(item => ['done', 'failed', 'skipped'].includes(item?.status))
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    const keepDone = new Set(done.slice(0, GLOBAL_BLOCK_QUEUE_DONE_MAX).map(item => normalizeHandle(item.handle)));
+    Object.keys(items).forEach(key => {
+      const item = items[key];
+      if (['done', 'failed', 'skipped'].includes(item?.status) && !keepDone.has(normalizeHandle(item.handle))) delete items[key];
+    });
+    GM_setValue(GLOBAL_BLOCK_QUEUE_KEY, { version: 1, updatedAt: Date.now(), items });
+  }
+
+  function globalBlockQueueItems(q = readGlobalBlockQueue()) {
+    return Object.values(q.items || {}).filter(item => item && normalizeHandle(item.handle));
+  }
+
+  function globalBlockQueueItemForHandle(handle) {
+    const key = normalizeHandle(handle);
+    return key ? readGlobalBlockQueue().items[key] || null : null;
+  }
+
+  function globalBlockQueueSummary(q = readGlobalBlockQueue()) {
+    const items = globalBlockQueueItems(q);
+    const counts = { queued: 0, running: 0, done: 0, failed: 0, skipped: 0, total: items.length };
+    items.forEach(item => {
+      const status = item.status || 'queued';
+      if (counts[status] == null) counts[status] = 0;
+      counts[status] += 1;
+    });
+    const current = items
+      .filter(item => item.status === 'running')
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] || null;
+    return { counts, current };
+  }
+
+  const GLOBAL_QUEUE_STATUS_LABELS = {
+    queued: '排队',
+    running: '执行中',
+    done: '完成',
+    failed: '失败',
+    skipped: '跳过',
+  };
+
+  function globalQueueStatusCat(status) {
+    if (status === 'running') return 'name_kw';
+    if (status === 'done') return 'liker';
+    if (status === 'failed') return 'regex_kw';
+    return 'suspect';
+  }
+
+  function globalQueueShowDone() {
+    return !!GM_getValue(GLOBAL_BLOCK_QUEUE_SHOW_DONE_KEY, false);
+  }
+
+  function setGlobalQueueShowDone(show) {
+    GM_setValue(GLOBAL_BLOCK_QUEUE_SHOW_DONE_KEY, !!show);
+    refreshGlobalBlockQueueDetailPanel();
+  }
+
+  function globalQueueUsersForPanel() {
+    const rank = { running: 0, queued: 1, failed: 2, skipped: 3, done: 4 };
+    const showDone = globalQueueShowDone();
+    return globalBlockQueueItems()
+      .filter(item => showDone || !['done', 'skipped'].includes(item.status || 'queued'))
+      .sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || Number(a.addedAt || 0) - Number(b.addedAt || 0))
+      .map(item => {
+        const status = item.status || 'queued';
+        const label = GLOBAL_QUEUE_STATUS_LABELS[status] || status;
+        const detail = [
+          item.source ? `来源 ${item.source}` : '',
+          item.attempts ? `尝试 ${item.attempts}` : '',
+          item.error ? `错误 ${item.error}` : '',
+        ].filter(Boolean).join(' · ');
+        const previewCats = normalizeQueuePreviewCats(item.previewCats);
+        return {
+          handle: normalizeHandle(item.handle),
+          displayName: item.displayName || item.handle,
+          cats: new Set(previewCats),
+          queueRowCat: globalQueueStatusCat(status),
+          heartHits: Array.isArray(item.heartHits) ? item.heartHits.map(v => String(v || '')).filter(Boolean).slice(0, 6) : [],
+          nameKwHits: Array.isArray(item.nameKwHits) ? item.nameKwHits.map(v => String(v || '')).filter(Boolean).slice(0, 6) : [],
+          kwHits: normalizeQueueKeywordHits(item.kwHits),
+          reHits: normalizeQueueRegexHits(item.reHits),
+          hideOnlyReHits: normalizeQueueRegexHits(item.hideOnlyReHits),
+          tweetSnippet: String(item.tweetSnippet || item.reason || ''),
+          queueStatus: status,
+          queueStatusLabel: label,
+          queueStatusDetail: detail || `加入时间 ${new Date(Number(item.addedAt || Date.now())).toLocaleTimeString()}`,
+          queueUpdatedAt: Number(item.updatedAt || 0),
+        };
+      });
+  }
+
+  function showGlobalBlockQueueDetailPanel(forceOpen = true) {
+    if (!forceOpen && globalBlockQueueMinimized()) {
+      const panel = document.getElementById('xfs-panel');
+      if (panel?.dataset.xfsGlobalQueueView === '1') panel.remove();
+      updateGlobalBlockQueuePanel();
+      return;
+    }
+    globalQueuePanelSuppressed = false;
+    GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, false);
+    document.getElementById('xfs-global-block-queue')?.remove();
+    showPanel(globalQueueUsersForPanel(), { globalQueueView: true, precheck: false });
+  }
+
+  function refreshGlobalBlockQueueDetailPanel() {
+    const panel = document.getElementById('xfs-panel');
+    if (globalBlockQueueMinimized()) {
+      if (panel?.dataset.xfsGlobalQueueView === '1') panel.remove();
+      updateGlobalBlockQueuePanel();
+      return;
+    }
+    if (panel?.dataset.xfsGlobalQueueView === '1') showGlobalBlockQueueDetailPanel(false);
+  }
+
+  function recoverStaleGlobalBlockQueueItems(q = readGlobalBlockQueue()) {
+    const now = Date.now();
+    let changed = false;
+    Object.keys(q.items || {}).forEach(key => {
+      const item = q.items[key];
+      if (item?.status === 'running' && now - Number(item.updatedAt || 0) > GLOBAL_BLOCK_QUEUE_LOCK_TTL * 2) {
+        q.items[key] = { ...item, status: 'queued', updatedAt: now, error: 'worker expired' };
+        changed = true;
+      }
+    });
+    if (changed) writeGlobalBlockQueue(q);
+    return q;
+  }
+
+  function enqueueGlobalBlockUsers(users, source = 'manual') {
+    const now = Date.now();
+    const q = readGlobalBlockQueue();
+    let added = 0;
+    let existing = 0;
+    let skipped = 0;
+    (users || []).forEach(user => {
+      const key = normalizeHandle(user?.handle || user);
+      if (!key || blockedHandles.has(key) || isProtectedVerifiedHandle(key)) {
+        skipped += 1;
+        return;
+      }
+      const preview = {
+        displayName: String(user?.displayName || user?.handle || key),
+        reason: String(user?.reason || user?.tweetSnippet || ''),
+        tweetSnippet: String(user?.tweetSnippet || user?.reason || ''),
+        previewCats: normalizeQueuePreviewCats(user?.cats),
+        heartHits: Array.isArray(user?.heartHits) ? user.heartHits.map(v => String(v || '')).filter(Boolean).slice(0, 6) : [],
+        nameKwHits: Array.isArray(user?.nameKwHits) ? user.nameKwHits.map(v => String(v || '')).filter(Boolean).slice(0, 6) : [],
+        kwHits: normalizeQueueKeywordHits(user?.kwHits),
+        reHits: normalizeQueueRegexHits(user?.reHits),
+        hideOnlyReHits: normalizeQueueRegexHits(user?.hideOnlyReHits),
+      };
+      const prev = q.items[key];
+      if (prev && ['queued', 'running'].includes(prev.status)) {
+        existing += 1;
+        q.items[key] = {
+          ...prev,
+          displayName: prev.displayName || preview.displayName,
+          source: prev.source || source,
+          reason: prev.reason || preview.reason,
+          tweetSnippet: prev.tweetSnippet || preview.tweetSnippet,
+          previewCats: Array.isArray(prev.previewCats) && prev.previewCats.length ? prev.previewCats : preview.previewCats,
+          heartHits: Array.isArray(prev.heartHits) && prev.heartHits.length ? prev.heartHits : preview.heartHits,
+          nameKwHits: Array.isArray(prev.nameKwHits) && prev.nameKwHits.length ? prev.nameKwHits : preview.nameKwHits,
+          kwHits: Array.isArray(prev.kwHits) && prev.kwHits.length ? prev.kwHits : preview.kwHits,
+          reHits: Array.isArray(prev.reHits) && prev.reHits.length ? prev.reHits : preview.reHits,
+          hideOnlyReHits: Array.isArray(prev.hideOnlyReHits) && prev.hideOnlyReHits.length ? prev.hideOnlyReHits : preview.hideOnlyReHits,
+          updatedAt: now,
+        };
+        return;
+      }
+      if (prev && prev.status === 'done') {
+        existing += 1;
+        return;
+      }
+      q.items[key] = {
+        handle: key,
+        displayName: preview.displayName,
+        source,
+        reason: preview.reason,
+        tweetSnippet: preview.tweetSnippet,
+        previewCats: preview.previewCats,
+        heartHits: preview.heartHits,
+        nameKwHits: preview.nameKwHits,
+        kwHits: preview.kwHits,
+        reHits: preview.reHits,
+        hideOnlyReHits: preview.hideOnlyReHits,
+        status: 'queued',
+        attempts: Math.max(0, Number(prev?.attempts || 0)),
+        addedAt: Number(prev?.addedAt || now),
+        updatedAt: now,
+        error: '',
+      };
+      added += 1;
+    });
+    writeGlobalBlockQueue(q);
+    if (added && globalBlockQueuePaused() && !globalBlockQueuePauseReason() && getCsrf()) {
+      setGlobalBlockQueuePaused(false);
+    }
+    ensureGlobalBlockQueuePanel();
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    maybeStartGlobalBlockQueueWorker();
+    return { added, existing, skipped, total: added + existing + skipped };
+  }
+
+  function autoQueueBlockUsers(users, opts = {}) {
+    const safeUsers = (users || []).filter(user => !isProtectedVerifiedHandle(user?.handle || user));
+    const result = enqueueGlobalBlockUsers(safeUsers, opts.queueSource || 'auto');
+    refreshGlobalQueueInlineButtons();
+    const msg = `已加入拉黑排队 ${result.added} 个${result.existing ? `，已有 ${result.existing} 个` : ''}${result.skipped ? `，跳过 ${result.skipped} 个` : ''}`;
+    if (result.added || result.existing || result.skipped) showToast(msg, false);
+    if (result.added || result.existing) markCleanupButtonsComplete(opts.refreshButtonIds);
+    opts.onBlockDone?.({ queued: result.added, existing: result.existing, skipped: result.skipped, total: safeUsers.length });
+    return result;
+  }
+
+  function globalBlockQueuePaused() {
+    return !!GM_getValue(GLOBAL_BLOCK_QUEUE_PAUSED_KEY, false);
+  }
+
+  function globalBlockQueuePauseReason() {
+    return String(GM_getValue(GLOBAL_BLOCK_QUEUE_PAUSE_REASON_KEY, '') || '');
+  }
+
+  function globalBlockQueueMinimized() {
+    return !!GM_getValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, true);
+  }
+
+  function setGlobalBlockQueueMinimized(minimized) {
+    GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, !!minimized);
+    globalQueuePanelSuppressed = false;
+    if (minimized) {
+      const panel = document.getElementById('xfs-panel');
+      if (panel?.dataset.xfsGlobalQueueView === '1') panel.remove();
+      updateGlobalBlockQueuePanel();
+    } else {
+      document.getElementById('xfs-global-block-queue')?.remove();
+      showGlobalBlockQueueDetailPanel();
+    }
+  }
+
+  function readGlobalBlockQueuePosition() {
+    const raw = GM_getValue(GLOBAL_BLOCK_QUEUE_POS_KEY, null);
+    if (!raw || typeof raw !== 'object') return { left: 0, top: 53 };
+    return {
+      left: Math.max(0, Number(raw.left) || 0),
+      top: Math.max(0, Number(raw.top) || 53),
+    };
+  }
+
+  function writeGlobalBlockQueuePosition(pos) {
+    GM_setValue(GLOBAL_BLOCK_QUEUE_POS_KEY, {
+      left: Math.max(0, Math.round(Number(pos.left) || 0)),
+      top: Math.max(0, Math.round(Number(pos.top) || 53)),
+    });
+  }
+
+  function setGlobalBlockQueuePaused(paused, opts = {}) {
+    if (!paused && !opts.keepRound) resetGlobalQueueRound();
+    GM_setValue(GLOBAL_BLOCK_QUEUE_PAUSED_KEY, !!paused);
+    GM_setValue(GLOBAL_BLOCK_QUEUE_PAUSE_REASON_KEY, paused ? String(opts.reason || 'manual') : '');
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    if (!paused) maybeStartGlobalBlockQueueWorker();
+  }
+
+  function clearCompletedGlobalBlockQueue() {
+    const q = readGlobalBlockQueue();
+    Object.keys(q.items).forEach(key => {
+      if (['done', 'failed', 'skipped'].includes(q.items[key]?.status)) delete q.items[key];
+    });
+    writeGlobalBlockQueue(q);
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+  }
+
+  function clearGlobalBlockQueue() {
+    const q = readGlobalBlockQueue();
+    let removed = 0;
+    let running = 0;
+    Object.keys(q.items).forEach(key => {
+      const status = q.items[key]?.status || 'queued';
+      if (status === 'running') {
+        running += 1;
+        return;
+      }
+      delete q.items[key];
+      removed += 1;
+    });
+    if (removed) {
+      writeGlobalBlockQueue(q);
+      updateGlobalBlockQueuePanel();
+      refreshGlobalBlockQueueDetailPanel();
+      refreshGlobalQueueInlineButtons();
+    }
+    return { removed, running };
+  }
+
+  function removeGlobalBlockQueueItem(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return { ok: false, reason: 'invalid' };
+    const q = readGlobalBlockQueue();
+    const item = q.items[key];
+    if (!item) return { ok: false, reason: 'missing' };
+    if ((item.status || 'queued') === 'running') return { ok: false, reason: 'running' };
+    delete q.items[key];
+    writeGlobalBlockQueue(q);
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel();
+    return { ok: true, status: item.status || 'queued' };
+  }
+
+  function tryAcquireGlobalBlockQueueLock() {
+    const now = Date.now();
+    const cur = GM_getValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, null);
+    if (cur?.tabId && cur.tabId !== globalQueueTabId && Number(cur.expiresAt || 0) > now) return false;
+    GM_setValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, { tabId: globalQueueTabId, heartbeatAt: now, expiresAt: now + GLOBAL_BLOCK_QUEUE_LOCK_TTL });
+    const next = GM_getValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, null);
+    return next?.tabId === globalQueueTabId;
+  }
+
+  function heartbeatGlobalBlockQueueLock() {
+    const now = Date.now();
+    const cur = GM_getValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, null);
+    if (cur?.tabId !== globalQueueTabId) return false;
+    GM_setValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, { tabId: globalQueueTabId, heartbeatAt: now, expiresAt: now + GLOBAL_BLOCK_QUEUE_LOCK_TTL });
+    return true;
+  }
+
+  function releaseGlobalBlockQueueLock() {
+    const cur = GM_getValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, null);
+    if (cur?.tabId === globalQueueTabId) GM_setValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, null);
+  }
+
+  function markHandleBlockedFromQueue(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return;
+    blockedHandles.add(handle);
+    blockedHandles.add(key);
+    matchedHandlesInView.delete(handle);
+    matchedHandlesInView.delete(key);
+    matchedUsersCache.delete(handle);
+    matchedUsersCache.delete(key);
+    updateHideBadge();
+    dimArticlesByHandle(handle);
+    updateReferralBadge();
+    document.querySelectorAll('button[data-xfs-handle]').forEach(b => {
+      if (normalizeHandle(b.dataset.xfsHandle) !== key) return;
+      const bMatched = b.dataset.xfsMatched === '1';
+      b.dataset.xfsState = 'blocked';
+      b.disabled = false;
+      b.textContent = IBTN_CHECK_SVG;
+      b.style.border = `1.5px solid ${C.mute}`;
+      b.style.color = C.mute;
+      b.style.boxShadow = '';
+      b.style.background = `${C.mute}18`;
+      b.style.opacity = '1';
+      b.title = (bMatched ? '[匹配过滤] ' : '') + `已拉黑 · 点击取消 @${handle}`;
+      updateInlineBlockButton(b);
+    });
+  }
+
+  function syncCompletedGlobalBlocksToThisTab() {
+    globalBlockQueueItems()
+      .filter(item => item.status === 'done')
+      .forEach(item => {
+        const key = normalizeHandle(item.handle);
+        if (key && !blockedHandles.has(key)) markHandleBlockedFromQueue(item.handle);
+      });
+  }
+
+  function refreshGlobalQueueInlineButtons() {
+    document.querySelectorAll('button[data-xfs-handle]').forEach(btn => {
+      if (btn.dataset.xfsState !== 'blocked') updateInlineBlockButton(btn);
+    });
+  }
+
+  async function processGlobalBlockQueue() {
+    if (globalQueueWorkerActive || globalBlockQueuePaused()) return;
+    if (!tryAcquireGlobalBlockQueueLock()) return;
+    globalQueueWorkerActive = true;
+    try {
+      while (!globalBlockQueuePaused()) {
+        if (!heartbeatGlobalBlockQueueLock()) break;
+        const round = readGlobalQueueRound();
+        if (Number(round.cooldownUntil || 0) > Date.now()) {
+          await coolDownGlobalBlockQueue(round.cooldownUntil, round.reason || '队列冷却');
+          if (globalBlockQueuePaused()) break;
+        }
+        const q = recoverStaleGlobalBlockQueueItems();
+        const next = globalBlockQueueItems(q)
+          .filter(item => item.status === 'queued')
+          .sort((a, b) => Number(a.addedAt || 0) - Number(b.addedAt || 0))[0];
+        if (!next) break;
+        const key = normalizeHandle(next.handle);
+        const csrf = getCsrf();
+        if (!csrf) {
+          pauseGlobalQueueForAuthLoss('未找到登录凭证（ct0 cookie）');
+          break;
+        }
+        q.items[key] = { ...next, status: 'running', workerTab: globalQueueTabId, attempts: Number(next.attempts || 0) + 1, updatedAt: Date.now(), error: '' };
+        writeGlobalBlockQueue(q);
+        updateGlobalBlockQueuePanel();
+        refreshGlobalQueueInlineButtons();
+        try {
+          await blockUserCoordinated(next.handle, csrf, null, {
+            slow: experimentalBrowseBlockActive() || next.source === 'browse_auto',
+          });
+          const fresh = readGlobalBlockQueue();
+          fresh.items[key] = { ...fresh.items[key], status: 'done', updatedAt: Date.now(), error: '' };
+          writeGlobalBlockQueue(fresh);
+          incrementPersistentBlockedCount(1);
+          markHandleBlockedFromQueue(next.handle);
+          const nextRoundCount = readGlobalQueueRound().count + 1;
+          writeGlobalQueueRound({ count: nextRoundCount, reason: '', pausedAt: 0, cooldownUntil: 0 });
+          refreshGlobalBlockQueueDetailPanel();
+          const cooldown = globalQueueCooldownForCount(nextRoundCount);
+          if (cooldown) {
+            await coolDownGlobalBlockQueue(Date.now() + cooldown.ms, cooldown.reason);
+            if (globalBlockQueuePaused()) break;
+          }
+        } catch (e) {
+          if (isBlockAuthLostError(e)) {
+            pauseGlobalQueueForAuthLoss(e?.message || '登录状态失效');
+            console.warn(`[XFS] global queue paused due to auth loss @${next.handle}:`, e);
+            break;
+          }
+          if (isBlockRateLimitError(e)) {
+            pauseGlobalQueueForRateLimit(e?.message || '平台限流');
+            console.warn(`[XFS] global queue paused due to rate limit @${next.handle}:`, e);
+            break;
+          }
+          const fresh = readGlobalBlockQueue();
+          fresh.items[key] = { ...fresh.items[key], status: 'failed', updatedAt: Date.now(), error: e?.message || String(e || 'failed') };
+          writeGlobalBlockQueue(fresh);
+          refreshGlobalBlockQueueDetailPanel();
+          refreshGlobalQueueInlineButtons();
+          console.warn(`[XFS] global queue block @${next.handle} failed:`, e);
+        }
+        updateGlobalBlockQueuePanel();
+      }
+    } finally {
+      globalQueueWorkerActive = false;
+      releaseGlobalBlockQueueLock();
+      updateGlobalBlockQueuePanel();
+    }
+  }
+
+  function maybeStartGlobalBlockQueueWorker() {
+    if (globalQueueWorkerActive || globalBlockQueuePaused()) return;
+    const hasQueued = globalBlockQueueItems().some(item => item.status === 'queued');
+    if (hasQueued) setTimeout(processGlobalBlockQueue, 0);
   }
 
   // ── Unblock API ───────────────────────────────────────────────────────
@@ -2147,6 +3102,7 @@
     name_kw:  { label: '用户名关键词',       color: C.nameKw },
     suspect:  { label: '可疑关键词',         color: C.suspect },
     regex_kw: { label: '正则匹配',           color: C.regexKw },
+    hide_only_regex: { label: '只隐藏正则', color: C.mute },
     liker:    { label: '列表用户',           color: C.mute },
     referral: { label: '导流号',             color: C.referral },
   };
@@ -2160,9 +3116,11 @@
     return (h >>> 0).toString(36).slice(0, 6).toUpperCase();
   }
 
-  function regexRuleLabel(pattern) {
-    const idx = SUSPECT_RE_KWS.findIndex(pat => pat === pattern);
-    return idx >= 0 ? `正则 ${idx + 1}` : `正则 ${shortRuleHash(pattern)}`;
+  function regexRuleLabel(pattern, type = 'regex') {
+    const list = type === 'hide_only_regex' ? HIDE_ONLY_RE_KWS : SUSPECT_RE_KWS;
+    const label = type === 'hide_only_regex' ? '只隐藏正则' : '正则';
+    const idx = list.findIndex(pat => pat === pattern);
+    return idx >= 0 ? `${label} ${idx + 1}` : `${label} ${shortRuleHash(pattern)}`;
   }
 
   function shortTooltipText(value, max = 120) {
@@ -2179,7 +3137,8 @@
     (matchInfo.heartHits || []).forEach(hit => add(`用户名心形: ${hit}`));
     (matchInfo.nameKwHits || []).forEach(kw => add(`用户名关键词: ${kw}`));
     (matchInfo.kwHits || []).forEach(hit => add(`内容关键词: ${hit.kw}${hit.snippet ? ` / ${hit.snippet}` : ''}`));
-    (matchInfo.reHits || []).forEach(hit => add(`${regexRuleLabel(hit.pat)}: ${hit.snippet || shortTooltipText(hit.pat, 80)}`));
+    (matchInfo.reHits || []).forEach(hit => add(`${regexRuleLabel(hit.pat, hit.type)}${hit.snippet ? `: ${hit.snippet}` : ''}`));
+    (matchInfo.hideOnlyReHits || []).forEach(hit => add(`${regexRuleLabel(hit.pat, hit.type)}${hit.snippet ? `: ${hit.snippet}` : ''}`));
     return lines.slice(0, 8).join('\n');
   }
 
@@ -2192,6 +3151,17 @@
     const matchText = hitTooltipFromMatchInfo(user || {});
     if (matchText) lines.push(matchText);
     return lines.join('\n');
+  }
+
+  function queueMatchSummaryText(user) {
+    const parts = [];
+    if (user?.cats?.has?.('referral')) parts.push('导流号');
+    if ((user?.heartHits || []).length) parts.push(`用户名心形 ${user.heartHits.length}`);
+    if ((user?.nameKwHits || []).length) parts.push(`用户名关键词 ${user.nameKwHits.length}`);
+    if ((user?.kwHits || []).length) parts.push(`内容关键词 ${user.kwHits.length}`);
+    if ((user?.reHits || []).length) parts.push(`正则 ${user.reHits.length}`);
+    if ((user?.hideOnlyReHits || []).length) parts.push(`只隐藏正则 ${user.hideOnlyReHits.length}`);
+    return parts.length ? `命中规则: ${parts.join(' / ')}` : '';
   }
 
   function showHideRuleStatsPanel() {
@@ -2253,7 +3223,7 @@
     } else {
       stats.forEach(item => {
         const type = item.type || 'content';
-        const color = type === 'name' ? C.nameKw : (type === 'regex' ? C.regexKw : C.suspect);
+        const color = type === 'name' ? C.nameKw : (type === 'regex' ? C.regexKw : (type === 'hide_only_regex' ? C.mute : C.suspect));
         const count = Number(item.count || 0);
         const row = document.createElement('div');
         row.style.cssText = `display:grid;grid-template-columns:86px minmax(0,1fr) 64px;gap:8px;align-items:center;font-size:11px;`;
@@ -2288,16 +3258,86 @@
     document.body.appendChild(panel);
   }
 
+  function readFloatingPanelPosition(key, fallback) {
+    const raw = GM_getValue(key, null);
+    if (!raw || typeof raw !== 'object') return fallback;
+    return {
+      left: Math.max(0, Number(raw.left) || fallback.left),
+      top: Math.max(0, Number(raw.top) || fallback.top),
+    };
+  }
+
+  function writeFloatingPanelPosition(key, pos) {
+    GM_setValue(key, {
+      left: Math.max(0, Math.round(Number(pos.left) || 0)),
+      top: Math.max(0, Math.round(Number(pos.top) || 0)),
+    });
+  }
+
+  function clampFloatingPanelPosition(pos, width, height) {
+    return {
+      left: Math.min(Math.max(0, Number(pos.left) || 0), Math.max(0, window.innerWidth - width - 8)),
+      top: Math.min(Math.max(0, Number(pos.top) || 0), Math.max(0, window.innerHeight - height - 8)),
+    };
+  }
+
+  function makeDraggableFloatingPanel(el, handle, storageKey, opts = {}) {
+    handle.style.cursor = 'move';
+    handle.onpointerdown = e => {
+      if (e.button != null && e.button !== 0) return;
+      if (e.target.closest('button,a,input,textarea,select')) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = el.offsetLeft;
+      const startTop = el.offsetTop;
+      el.setPointerCapture?.(e.pointerId);
+      const applyPos = pos => {
+        const w = opts.width?.() || el.offsetWidth || 190;
+        const h = opts.height?.() || el.offsetHeight || 120;
+        const next = clampFloatingPanelPosition(pos, w, h);
+        el.style.left = `${next.left}px`;
+        el.style.top = `${next.top}px`;
+        el.style.right = 'auto';
+        opts.onMove?.(next);
+        return next;
+      };
+      const onMove = ev => applyPos({
+        left: startLeft + ev.clientX - startX,
+        top: startTop + ev.clientY - startY,
+      });
+      const onUp = ev => {
+        el.releasePointerCapture?.(ev.pointerId);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        const finalPos = applyPos({ left: el.offsetLeft, top: el.offsetTop });
+        writeFloatingPanelPosition(storageKey, finalPos);
+        opts.onEnd?.(finalPos);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp, { once: true });
+    };
+  }
+
   function showPanel(allUsers, opts = {}) {
     document.getElementById('xfs-panel')?.remove();
     document.getElementById('xfs-panel-dock')?.remove();
 
-    const panelUsers = (allUsers || []).filter(user => !isProtectedVerifiedHandle(user.handle));
+    const isGlobalQueueView = !!opts.globalQueueView;
+    if (opts.forceOpen !== false) {
+      panelDockedActive = false;
+      GM_setValue('panel_docked', false);
+      document.getElementById('xfs-panel-dock')?.remove();
+    }
+    const panelUsers = isGlobalQueueView
+      ? (allUsers || [])
+      : (allUsers || []).filter(user => !isProtectedVerifiedHandle(user.handle));
     const topUsers = panelUsers.slice(0, MAX_BLOCK);
     const overflow = panelUsers.length - topUsers.length;
 
     // ── Build ordered list first (needed for adaptive width) ──
     function getPrimaryCat(u) {
+      if (isGlobalQueueView && u.queueRowCat) return u.queueRowCat;
       if (u.cats.has('heart'))    return 'heart';
       if (u.cats.has('name_kw')) return 'name_kw';
       if (u.cats.has('referral')) return 'referral';
@@ -2322,13 +3362,19 @@
       : Math.min(3, Math.max(2, Math.ceil(ordered.length / rowsPerCol)));
     const COL_W = 260;
     const panelW = colsNeeded * COL_W;
+    const panelPos = clampFloatingPanelPosition(
+      readFloatingPanelPosition(RESULT_PANEL_POS_KEY, { left: 0, top: 53 }),
+      panelW,
+      220
+    );
 
     // Panel — flush left edge, adaptive width, semi-transparent
     const panel = document.createElement('div');
     panel.id = 'xfs-panel';
+    if (isGlobalQueueView) panel.dataset.xfsGlobalQueueView = '1';
     panel.style.cssText = [
-      'position:fixed', 'left:0', 'top:53px',
-      `width:${panelW}px`, 'height:calc(100vh - 53px)',
+      'position:fixed', `left:${panelPos.left}px`, `top:${panelPos.top}px`,
+      `width:${panelW}px`, `height:calc(100vh - ${panelPos.top}px)`,
       'background:rgba(255,255,255,0.93)',
       'backdrop-filter:blur(6px)',
       '-webkit-backdrop-filter:blur(6px)',
@@ -2344,14 +3390,28 @@
     // ── Header ──
     const hdr = document.createElement('div');
     hdr.style.cssText = `padding:6px 12px;border-bottom:1px solid ${C.border};display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+    makeDraggableFloatingPanel(panel, hdr, RESULT_PANEL_POS_KEY, {
+      width: () => panelW,
+      height: () => 220,
+      onMove: pos => { panel.style.height = `calc(100vh - ${pos.top}px)`; },
+      onEnd: () => requestAnimationFrame(updateGlobalBlockQueuePanel),
+    });
 
     const title = document.createElement('span');
-    title.textContent = 'Fraud Scanner';
+    title.textContent = '拉黑排队';
     title.style.cssText = 'font-size:13px;font-weight:700;flex:1;';
 
     const badge = document.createElement('span');
-    badge.textContent = overflow > 0 ? `${topUsers.length}/${panelUsers.length}，还有 ${overflow} 个` : `${topUsers.length} 个`;
-    badge.style.cssText = `font-size:11px;color:${overflow > 0 ? C.blockRed : C.sub};`;
+    let badgeAlert = overflow > 0;
+    if (isGlobalQueueView) {
+      const { counts } = globalBlockQueueSummary();
+      const round = readGlobalQueueRound();
+      badge.textContent = `${experimentalBrowseBlockActive() ? '边刷边拉黑 · ' : ''}排队 ${counts.queued} / 执行 ${counts.running} / 完成 ${counts.done} / 失败 ${counts.failed} / ${globalQueueRoundText(round)}`;
+      badgeAlert = counts.failed > 0 || !!round.reason;
+    } else {
+      badge.textContent = overflow > 0 ? `候选 ${topUsers.length}/${panelUsers.length}，还有 ${overflow} 个` : `候选 ${topUsers.length} 个`;
+    }
+    badge.style.cssText = `font-size:11px;color:${badgeAlert ? C.blockRed : C.sub};`;
 
     const countBadge = document.createElement('span');
     countBadge.className = 'xfs-persistent-blocked-count';
@@ -2367,11 +3427,11 @@
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '\u00d7';
     closeBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:16px;color:${C.sub};padding:0 2px;line-height:1;`;
-    closeBtn.onclick = () => panel.remove();
+    closeBtn.onclick = () => isGlobalQueueView ? setGlobalBlockQueueMinimized(true) : panel.remove();
 
     const dockBtn = document.createElement('button');
     dockBtn.textContent = '收起';
-    dockBtn.title = '收起到左侧进度条';
+    dockBtn.title = isGlobalQueueView ? '最小化拉黑排队' : '收起到左侧进度条';
     dockBtn.style.cssText = `background:#fff;border:1px solid ${C.btnBorder};border-radius:8px;cursor:pointer;font-size:10px;color:${C.sub};padding:1px 6px;white-space:nowrap;`;
 
     hdr.appendChild(title);
@@ -2563,6 +3623,60 @@
         addReBtn.onclick = addRe;
         reRow.appendChild(addReBtn);
         reSection.appendChild(reRow);
+
+        const hideOnlyNote = document.createElement('div');
+        hideOnlyNote.textContent = '只隐藏正则：命中后只折叠回复，不会仅因这条规则进入拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。适合误伤偏高但噪音很多的模式。';
+        hideOnlyNote.style.cssText = `font-size:10px;line-height:1.4;color:${C.sub};padding:6px 8px;border:1px solid ${C.mute};border-radius:8px;background:#effaf7;`;
+        reSection.appendChild(hideOnlyNote);
+
+        const hideOnlyRow = document.createElement('div');
+        hideOnlyRow.style.cssText = rowCss;
+        HIDE_ONLY_RE_KWS.forEach((pat, i) => {
+          const chip = document.createElement('span');
+          chip.title = ruleTitle('hide_only_regex', i, pat);
+          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.mute};border-radius:10px;font-size:10px;color:${C.mute};max-width:360px;`;
+          const lbl = document.createElement('span');
+          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          lbl.textContent = pat;
+          const del = document.createElement('button');
+          del.textContent = '×';
+          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.mute};padding:0;line-height:1;flex-shrink:0;`;
+          del.onclick = () => { HIDE_ONLY_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+          chip.appendChild(lbl);
+          chip.appendChild(del);
+          hideOnlyRow.appendChild(chip);
+        });
+        const hideOnlyInp = document.createElement('input');
+        hideOnlyInp.placeholder = '+ 只隐藏正则';
+        hideOnlyInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；默认按 content: 内容范围处理';
+        hideOnlyInp.style.cssText = `border:1px solid ${C.mute};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
+        const addHideOnlyRe = () => {
+          const v = hideOnlyInp.value.trim();
+          if (!v) return;
+          const parsed = _regexPatternParts(v);
+          if (parsed.scope !== 'both' && parsed.scope !== 'body') { hideOnlyInp.style.borderColor = C.blockRed; return; }
+          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { hideOnlyInp.style.borderColor = C.blockRed; return; }
+          hideOnlyInp.style.borderColor = C.mute;
+          const normalized = `content:${parsed.pat}`;
+          if (!HIDE_ONLY_RE_KWS.includes(normalized)) { HIDE_ONLY_RE_KWS.push(normalized); saveKws(); refreshKwPanel(); }
+          else hideOnlyInp.value = '';
+        };
+        hideOnlyInp.onkeydown = e => { if (e.key === 'Enter') addHideOnlyRe(); };
+        hideOnlyInp.oninput = () => {
+          const v = hideOnlyInp.value.trim();
+          if (!v) { hideOnlyInp.style.borderColor = C.mute; return; }
+          const parsed = _regexPatternParts(v);
+          if (parsed.scope !== 'both' && parsed.scope !== 'body') { hideOnlyInp.style.borderColor = C.blockRed; return; }
+          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); hideOnlyInp.style.borderColor = C.mute; }
+          catch (_) { hideOnlyInp.style.borderColor = C.blockRed; }
+        };
+        hideOnlyRow.appendChild(hideOnlyInp);
+        const addHideOnlyBtn = document.createElement('button');
+        addHideOnlyBtn.textContent = '+';
+        addHideOnlyBtn.style.cssText = `background:${C.mute};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
+        addHideOnlyBtn.onclick = addHideOnlyRe;
+        hideOnlyRow.appendChild(addHideOnlyBtn);
+        reSection.appendChild(hideOnlyRow);
       }
       kwBar.appendChild(reSection);
     }
@@ -2578,6 +3692,7 @@
       kwBar.style.display = nowHidden ? 'flex' : 'none';
       kwToggle.textContent = nowHidden ? '关键词 ×' : '关键词';
     };
+    if (isGlobalQueueView) kwToggle.style.display = 'none';
     hdr.insertBefore(kwToggle, closeBtn);
 
     let dockIndicator = null;
@@ -2587,8 +3702,9 @@
     let dockRefreshBtn = null;
     let dockRefreshVisible = false;
     let dockStatusText = '';
+    let dockPrimaryButton = null;
     function dockText() {
-      return blockBtn?.textContent || badge.textContent || 'XFS';
+      return dockPrimaryButton?.textContent || badge.textContent || 'XFS';
     }
     function compactDockText(text) {
       const s = String(text || '').trim();
@@ -2610,11 +3726,16 @@
     }
     function openDockIndicator() {
       document.getElementById('xfs-panel-dock')?.remove();
+      const dockPos = clampFloatingPanelPosition(
+        readFloatingPanelPosition(RESULT_PANEL_DOCK_POS_KEY, { left: 0, top: 92 }),
+        GLOBAL_BLOCK_QUEUE_PANEL_W,
+        140
+      );
       dockIndicator = document.createElement('div');
       dockIndicator.id = 'xfs-panel-dock';
       dockIndicator.style.cssText = [
-        'position:fixed', 'left:0', 'top:92px',
-        'width:90px', 'box-sizing:border-box',
+        'position:fixed', `left:${dockPos.left}px`, `top:${dockPos.top}px`,
+        `width:${GLOBAL_BLOCK_QUEUE_PANEL_W}px`, 'box-sizing:border-box',
         'max-height:calc(100vh - 128px)',
         'background:rgba(255,255,255,0.72)', `color:${C.text}`,
         'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
@@ -2660,7 +3781,7 @@
         'border-radius:0 9px 0 0',
       ].join(';');
       dockCaption = document.createElement('div');
-      dockCaption.textContent = '批量拉黑队列';
+      dockCaption.textContent = '拉黑排队';
       dockCaption.style.cssText = [
         `flex:1;color:${C.sub};opacity:0.78`,
         'font-size:10px', 'font-weight:700', 'line-height:1',
@@ -2675,13 +3796,13 @@
       dockActions.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;';
       dockRestoreBtn = document.createElement('button');
       dockRestoreBtn.type = 'button';
-      dockRestoreBtn.textContent = '打开队列';
-      dockRestoreBtn.title = '打开批量拉黑队列';
+      dockRestoreBtn.textContent = '打开排队';
+      dockRestoreBtn.title = '打开拉黑排队';
       dockRestoreBtn.style.cssText = [
         'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
         `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
         'font-size:11px', 'font-weight:700', 'line-height:1',
-        'width:70px', 'height:25px', 'padding:0', 'cursor:pointer',
+        'width:100%', 'height:25px', 'padding:0', 'cursor:pointer',
         'box-sizing:border-box', 'text-align:center', 'white-space:nowrap',
         'display:flex', 'align-items:center', 'justify-content:center',
         'appearance:none', '-webkit-appearance:none',
@@ -2707,7 +3828,7 @@
         'background:rgba(15,20,25,0.045)', `color:${C.sub}`,
         `border:1px solid rgba(207,217,222,0.66)`, 'border-radius:7px',
         'font-size:11px', 'font-weight:700', 'line-height:1',
-        'width:70px', 'height:25px', 'padding:0', 'cursor:pointer',
+        'width:100%', 'height:25px', 'padding:0', 'cursor:pointer',
         'box-sizing:border-box', 'text-align:center', 'white-space:nowrap',
         'align-items:center', 'justify-content:center',
         'appearance:none', '-webkit-appearance:none',
@@ -2723,10 +3844,18 @@
       dockActions.appendChild(dockRestoreBtn);
       dockActions.appendChild(dockRefreshBtn);
       dockIndicator.appendChild(dockActions);
+      makeDraggableFloatingPanel(dockIndicator, dockTop, RESULT_PANEL_DOCK_POS_KEY, {
+        width: () => GLOBAL_BLOCK_QUEUE_PANEL_W,
+        height: () => dockIndicator.offsetHeight || 120,
+      });
       updateDockIndicator(dockStatusText || dockText(), { showRefresh: dockRefreshVisible });
       document.body.appendChild(dockIndicator);
     }
     dockBtn.onclick = () => {
+      if (isGlobalQueueView) {
+        setGlobalBlockQueueMinimized(true);
+        return;
+      }
       kwBar.style.display = 'none';
       kwToggle.textContent = '关键词';
       panelDockedActive = true;
@@ -2754,7 +3883,11 @@
     if (ordered.length === 0) {
       colContainer.style.columnCount = 'auto';
       const empty = document.createElement('div');
-      empty.textContent = '未发现符合条件的用户';
+      if (isGlobalQueueView && !globalQueueShowDone() && globalBlockQueueSummary().counts.done > 0) {
+        empty.textContent = '当前没有待处理账号；已屏蔽账号已折叠';
+      } else {
+        empty.textContent = isGlobalQueueView ? '拉黑排队为空' : '未发现符合条件的用户';
+      }
       empty.style.cssText = `padding:32px;color:${C.sub};`;
       colContainer.appendChild(empty);
     } else {
@@ -2764,24 +3897,49 @@
 
         // Wrapper div with break-inside:avoid so a row is never split across columns
         const wrap = document.createElement('div');
-        wrap.style.cssText = 'break-inside:avoid;page-break-inside:avoid;';
+        wrap.style.cssText = 'break-inside:avoid;page-break-inside:avoid;position:relative;';
 
         const row = document.createElement('div');
-        row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px 5px 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
+        row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px ${isGlobalQueueView ? '22px' : '5px'} 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
         row.title = hitTooltipFromUser(user);
         row.onmouseenter = () => { if (!row.dataset.blocked) row.style.background = C.rowHover; };
         row.onmouseleave = () => { if (!row.dataset.blocked) row.style.background = ''; };
 
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = opts.precheck !== false;
-        cb.style.cssText = 'width:11px;height:11px;margin-top:2px;flex-shrink:0;cursor:pointer;accent-color:#f4212e;';
-        allCheckboxes.push({ cb, handle: user.handle, row });
-        row.onclick = e => {
-          if (e.target.closest('a,input,button')) return;
-          cb.checked = !cb.checked;
-          cb.dispatchEvent(new Event('change', { bubbles: true }));
-        };
+        if (isGlobalQueueView) {
+          const removeBtn = document.createElement('button');
+          const running = (user.queueStatus || 'queued') === 'running';
+          removeBtn.type = 'button';
+          removeBtn.textContent = '×';
+          removeBtn.title = running ? `@${user.handle} 正在执行中，暂时不能移出队列` : `将 @${user.handle} 移出拉黑队列`;
+          removeBtn.disabled = running;
+          removeBtn.style.cssText = `position:absolute;top:4px;right:5px;z-index:1;width:14px;height:14px;padding:0;border:none;border-radius:999px;background:${running ? 'transparent' : 'rgba(15,20,25,0.06)'};color:${running ? C.mute : C.sub};font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:${running ? 'not-allowed' : 'pointer'};opacity:${running ? '0.45' : '1'};`;
+          removeBtn.onclick = e => {
+            e.stopPropagation();
+            const result = removeGlobalBlockQueueItem(user.handle);
+            if (!result.ok && result.reason === 'running') showToast(`@${user.handle} 正在执行中，暂时不能移出队列`, true);
+          };
+          wrap.appendChild(removeBtn);
+        }
+
+        let cb = null;
+        if (isGlobalQueueView) {
+          const status = document.createElement('span');
+          status.textContent = user.queueStatus === 'done' ? '✓' : (user.queueStatus === 'failed' ? '!' : (user.queueStatus === 'running' ? '…' : '•'));
+          status.title = user.queueStatusLabel || user.queueStatus || 'queued';
+          status.style.cssText = `width:13px;margin-top:1px;flex-shrink:0;text-align:center;font-size:12px;font-weight:800;color:${color};`;
+          row.appendChild(status);
+        } else {
+          cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = opts.precheck !== false;
+          cb.style.cssText = 'width:11px;height:11px;margin-top:2px;flex-shrink:0;cursor:pointer;accent-color:#f4212e;';
+          allCheckboxes.push({ cb, handle: user.handle, row });
+          row.onclick = e => {
+            if (e.target.closest('a,input,button')) return;
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+        }
 
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
@@ -2789,28 +3947,42 @@
         const profileTitle = `打开 @${user.handle} 主页`;
         let html = `<div class="xfs-name" style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;">${esc(user.displayName)}</a></div>`;
         html += `<div style="color:${C.sub};font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:none;">@${esc(user.handle)}</a></div>`;
-        if (user.cats.has('heart') && user.heartHits && user.heartHits.length > 0) {
+        if (isGlobalQueueView) {
+          html += `<div style="font-size:9px;color:${color};font-weight:700;">[${esc(user.queueStatusLabel || user.queueStatus || 'queued')}] ${esc(user.queueStatusDetail || '')}</div>`;
+          if (user.tweetSnippet) {
+            html += `<div style="font-size:9px;color:${C.sub};font-style:italic;word-break:break-all;">"${esc(user.tweetSnippet)}"</div>`;
+          }
+          const queueMatchSummary = queueMatchSummaryText(user);
+          if (queueMatchSummary) {
+            html += `<div style="font-size:9px;color:${C.sub};word-break:break-all;">${esc(queueMatchSummary)}</div>`;
+          }
+        }
+        if (!isGlobalQueueView && user.cats.has('heart') && user.heartHits && user.heartHits.length > 0) {
           html += `<div style="font-size:9px;color:${C.heart};">[心形] ${esc(user.heartHits.join(''))} 在用户名中</div>`;
         }
-        if (user.cats.has('name_kw') && user.nameKwHits && user.nameKwHits.length > 0) {
+        if (!isGlobalQueueView && user.cats.has('name_kw') && user.nameKwHits && user.nameKwHits.length > 0) {
           user.nameKwHits.forEach(kw => {
             html += `<div style="font-size:9px;color:${C.nameKw};">[用户名] ${esc(kw)}</div>`;
           });
         }
-        // For name/heart matches show first 10 words of the tweet so users can
-        // quickly judge borderline cases without opening the tweet.
-        if ((user.cats.has('heart') || user.cats.has('name_kw')) && user.tweetSnippet) {
+        if (!isGlobalQueueView && (user.cats.has('heart') || user.cats.has('name_kw')) && user.tweetSnippet) {
           html += `<div style="font-size:9px;color:${C.sub};font-style:italic;word-break:break-all;">"${esc(user.tweetSnippet)}"</div>`;
         }
-        if (user.cats.has('suspect') && user.kwHits.length > 0) {
+        if (!isGlobalQueueView && user.cats.has('suspect') && user.kwHits.length > 0) {
           user.kwHits.forEach(h => {
             html += `<div style="font-size:9px;color:${C.suspect};word-break:break-all;">[${esc(h.kw)}] ${esc(h.snippet)}</div>`;
           });
         }
-        if (user.cats.has('regex_kw') && user.reHits && user.reHits.length > 0) {
+        if (!isGlobalQueueView && user.cats.has('regex_kw') && user.reHits && user.reHits.length > 0) {
           user.reHits.forEach(h => {
-            const label = h.pat.length > 18 ? h.pat.slice(0, 18) + '…' : h.pat;
-            html += `<div style="font-size:9px;color:${C.regexKw};word-break:break-all;" title="${esc(h.pat)}">[re: ${esc(label)}] ${esc(h.snippet)}</div>`;
+            const label = regexRuleLabel(h.pat, h.type || 'regex');
+            html += `<div style="font-size:9px;color:${C.regexKw};word-break:break-all;">[${esc(label)}] ${esc(h.snippet)}</div>`;
+          });
+        }
+        if (!isGlobalQueueView && user.hideOnlyReHits && user.hideOnlyReHits.length > 0) {
+          user.hideOnlyReHits.forEach(h => {
+            const label = regexRuleLabel(h.pat, h.type || 'hide_only_regex');
+            html += `<div style="font-size:9px;color:${C.mute};word-break:break-all;">[${esc(label)}] ${esc(h.snippet)}</div>`;
           });
         }
         info.innerHTML = html;
@@ -2818,7 +3990,7 @@
           a.addEventListener('click', e => e.stopPropagation());
         });
 
-        row.appendChild(cb);
+        if (cb) row.appendChild(cb);
         row.appendChild(info);
         wrap.appendChild(row);
         colContainer.appendChild(wrap);
@@ -2830,7 +4002,7 @@
     // ── Hint bar (revealed after blocking completes) ──
     const hint = document.createElement('div');
     hint.style.cssText = `padding:5px 12px;border-top:1px solid ${C.border};font-size:11px;color:${C.sub};text-align:center;flex-shrink:0;display:none;background:${C.catBg};`;
-    hint.textContent = '拉黑完成 · 点击完成按钮刷新页面';
+    hint.textContent = '已加入拉黑排队 · 右上角查看执行进度';
 
     // ── Footer ──
     const ftr = document.createElement('div');
@@ -2845,130 +4017,132 @@
       return b;
     }
 
-    const deselBtn = mkBtn('取消全选', false);
-    deselBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = false; });
-
-    const selBtn = mkBtn('全选', false);
-    selBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = true; });
-
-    const checkedCount = () => allCheckboxes.filter(({ cb }) => cb.checked).length;
-    const blockBtn = mkBtn(`拉黑 (${checkedCount()})`, true);
-    let blockingInProgress = false;
-    let blockingComplete = false;
-
-    allCheckboxes.forEach(({ cb }) => {
-      cb.addEventListener('change', () => {
-        if (!blockingInProgress && !blockingComplete) blockBtn.textContent = `拉黑 (${checkedCount()})`;
-      });
-    });
-
-    async function startBlocking() {
-      if (blockBtn.disabled) return;
-      const uniqueHandles = [...new Set(allCheckboxes.filter(({ cb }) => cb.checked).map(({ handle }) => handle))];
-      const isHandleStillChecked = handle => {
-        const key = normalizeHandle(handle);
-        return allCheckboxes.some(item => normalizeHandle(item.handle) === key && item.cb.checked);
+    if (isGlobalQueueView) {
+      const refreshBtn = mkBtn('刷新', false);
+      refreshBtn.onclick = showGlobalBlockQueueDetailPanel;
+      const doneToggleBtn = mkBtn(globalQueueShowDone() ? '折叠已屏蔽' : '已屏蔽', false);
+      doneToggleBtn.title = globalQueueShowDone() ? '隐藏已完成和已跳过账号' : '展开查看已完成和已跳过账号';
+      doneToggleBtn.onclick = () => setGlobalQueueShowDone(!globalQueueShowDone());
+      const pauseBtn = mkBtn(globalBlockQueuePaused() ? '继续' : '暂停', false);
+      pauseBtn.onclick = () => {
+        setGlobalBlockQueuePaused(!globalBlockQueuePaused());
+        showGlobalBlockQueueDetailPanel();
       };
-      let done = 0, failed = 0, skipped = 0;
-      try {
-        if (uniqueHandles.length === 0) return;
-
-        const csrf = getCsrf();
-        if (!csrf) { alert('未找到登录凭证（ct0 cookie），请确认已登录 X/Twitter'); return; }
-
-        stopBackgroundLoad = true;  // stop background scroll so page stays put
-        blockingInProgress = true;
-        blockBtn.disabled = true;
-        selBtn.disabled = true;
-
-        const rowMap = new Map();
-        allCheckboxes.forEach(({ handle, row }) => {
-          if (!rowMap.has(handle)) rowMap.set(handle, []);
-          rowMap.get(handle).push(row);
-        });
-
-        for (const handle of uniqueHandles) {
-          if (!isHandleStillChecked(handle) || isProtectedVerifiedHandle(handle)) {
-            if (isProtectedVerifiedHandle(handle)) clearProtectedVerifiedArticlesInView();
-            skipped++;
-            blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
-            updateDockIndicator();
-            continue;
-          }
-          blockBtn.textContent = `⏳ ${done + skipped + failed + 1}/${uniqueHandles.length}`;
-          updateDockIndicator();
-          try {
-            const result = await blockUserCoordinated(handle, csrf, () => isHandleStillChecked(handle));
-            if (result?.skipped) {
-              skipped++;
-              blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
-              updateDockIndicator();
-              continue;
-            }
-            done++;
-            incrementPersistentBlockedCount(1);
-            blockedHandles.add(handle);
-            blockedHandles.add(normalizeHandle(handle));
-            matchedHandlesInView.delete(handle);
-            matchedHandlesInView.delete(normalizeHandle(handle));
-            matchedUsersCache.delete(handle);
-            matchedUsersCache.delete(normalizeHandle(handle));
-            updateHideBadge();
-            dimArticlesByHandle(handle);
-            updateReferralBadge();
-            document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
-              const bMatched = b.dataset.xfsMatched === '1';
-              b.dataset.xfsState = 'blocked';
-              b.textContent      = IBTN_CHECK_SVG;
-              b.style.border     = `1.5px solid ${C.mute}`;
-              b.style.color      = C.mute;
-              b.style.boxShadow  = '';
-              b.style.background = `${C.mute}18`;
-              b.style.opacity    = '1';
-              b.title            = (bMatched ? '[匹配过滤] ' : '') + `已拉黑 · 点击取消 @${handle}`;
-            });
-            (rowMap.get(handle) || []).forEach(row => {
-              row.dataset.blocked = '1';
-              row.style.opacity = '0.3';
-              row.querySelectorAll('a.xfs-profile-link').forEach(a => {
-                a.title = '如果错误拉黑，打开主页手动恢复';
-              });
-              const nameEl = row.querySelector('.xfs-name');
-              if (nameEl) nameEl.style.textDecoration = 'line-through';
-            });
-          } catch (e) {
-            failed++;
-            console.warn(`[XFS] block @${handle} failed:`, e);
-          }
-          blockBtn.textContent = `${done + skipped}/${uniqueHandles.length}${failed ? ` (${failed}失败)` : ''}`;
-          updateDockIndicator();
+      const clearDoneBtn = mkBtn('清完成', false);
+      clearDoneBtn.onclick = () => {
+        clearCompletedGlobalBlockQueue();
+        showGlobalBlockQueueDetailPanel();
+      };
+      const clearQueueBtn = mkBtn('清队列', false);
+      clearQueueBtn.title = '清除当前队列中的全部非执行中条目';
+      clearQueueBtn.onclick = () => {
+        const summary = globalBlockQueueSummary().counts;
+        const removable = (summary.queued || 0) + (summary.done || 0) + (summary.failed || 0) + (summary.skipped || 0);
+        const running = summary.running || 0;
+        if (!removable && !running) {
+          showToast('拉黑队列已经是空的', false);
+          return;
         }
+        const confirmText = running
+          ? `当前有 ${running} 个账号正在执行中，暂时不会被清除。确认清除其余 ${removable} 个队列条目？`
+          : `确认清除当前拉黑队列中的 ${removable} 个条目？此操作不可恢复。`;
+        if (!window.confirm(confirmText)) return;
+        const result = clearGlobalBlockQueue();
+        showGlobalBlockQueueDetailPanel();
+        if (result.removed) {
+          showToast(
+            result.running
+              ? `已清除 ${result.removed} 个队列条目；仍有 ${result.running} 个执行中账号保留`
+              : `已清除 ${result.removed} 个队列条目`,
+            false
+          );
+        } else if (result.running) {
+          showToast(`当前只有 ${result.running} 个执行中账号，暂时无法清除`, true);
+        }
+      };
+      const closePanelBtn = mkBtn('收起', true);
+      closePanelBtn.onclick = () => closeBtn.click();
+      ftr.appendChild(refreshBtn);
+      ftr.appendChild(doneToggleBtn);
+      ftr.appendChild(pauseBtn);
+      ftr.appendChild(clearDoneBtn);
+      ftr.appendChild(clearQueueBtn);
+      ftr.appendChild(closePanelBtn);
+    } else {
 
-        blockingComplete = true;
-        blockingInProgress = false;
-        blockBtn.disabled = false;
-        blockBtn.textContent = `拉黑完成 ${done}${skipped ? `，跳过 ${skipped}` : ''}${failed ? `，${failed} 失败` : ''}，点击刷新`;
-        blockBtn.title = '拉黑完成，点击刷新页面';
-        blockBtn.onclick = () => location.reload();
-        badge.textContent = `拉黑完成 ${done} 个${skipped ? `，跳过 ${skipped} 个` : ''}${failed ? `，失败 ${failed} 个` : ''}`;
-        updateDockIndicator(badge.textContent, { showRefresh: true });
-        hint.style.display = '';
-        markCleanupButtonsComplete(opts.refreshButtonIds);
-      } finally {
-        blockingInProgress = false;
-        opts.onBlockDone?.({ done, failed, skipped, total: uniqueHandles.length });
+      const deselBtn = mkBtn('取消全选', false);
+      deselBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = false; });
+
+      const selBtn = mkBtn('全选', false);
+      selBtn.onclick = () => allCheckboxes.forEach(({ cb }) => { cb.checked = true; });
+
+      const checkedCount = () => allCheckboxes.filter(({ cb }) => cb.checked).length;
+      const blockBtn = mkBtn(`加入拉黑排队 (${checkedCount()})`, true);
+      dockPrimaryButton = blockBtn;
+      let blockingInProgress = false;
+      let blockingComplete = false;
+
+      allCheckboxes.forEach(({ cb }) => {
+        cb.addEventListener('change', () => {
+          if (!blockingInProgress && !blockingComplete) blockBtn.textContent = `加入拉黑排队 (${checkedCount()})`;
+        });
+      });
+
+      async function startBlocking() {
+        if (blockBtn.disabled) return;
+        const uniqueHandles = [...new Set(allCheckboxes.filter(({ cb }) => cb.checked).map(({ handle }) => handle))];
+        const userByHandle = new Map((allUsers || []).map(user => [normalizeHandle(user.handle), user]));
+        let added = 0, existing = 0, skipped = 0;
+        try {
+          if (uniqueHandles.length === 0) return;
+
+          stopBackgroundLoad = true;  // stop background scroll so page stays put
+          blockingInProgress = true;
+          blockBtn.disabled = true;
+          selBtn.disabled = true;
+
+          const selectedUsers = uniqueHandles.map(handle => {
+            const key = normalizeHandle(handle);
+            const user = userByHandle.get(key) || { handle: key, displayName: handle };
+            return { ...user, handle: key, source: opts.queueSource || 'panel' };
+          });
+          const result = enqueueGlobalBlockUsers(selectedUsers, opts.queueSource || 'panel');
+          added = result.added;
+          existing = result.existing;
+          skipped = result.skipped;
+          allCheckboxes.filter(({ cb }) => cb.checked).forEach(({ row }) => {
+            row.dataset.blocked = '1';
+            row.style.opacity = '0.55';
+            const nameEl = row.querySelector('.xfs-name');
+            if (nameEl) nameEl.style.textDecoration = 'underline';
+          });
+          blockingComplete = true;
+          blockingInProgress = false;
+          blockBtn.disabled = false;
+          blockBtn.textContent = `已入队 ${added}${existing ? `，已有 ${existing}` : ''}${skipped ? `，跳过 ${skipped}` : ''}`;
+          blockBtn.title = '已加入拉黑排队，右上角可查看进度';
+          badge.textContent = `已加入拉黑排队 ${added} 个${existing ? `，已有 ${existing} 个` : ''}${skipped ? `，跳过 ${skipped} 个` : ''}`;
+          updateDockIndicator(badge.textContent, { showRefresh: true });
+          hint.style.display = '';
+          markCleanupButtonsComplete(opts.refreshButtonIds);
+        } finally {
+          blockingInProgress = false;
+          opts.onBlockDone?.({ queued: added, existing, skipped, total: uniqueHandles.length });
+        }
       }
+
+      blockBtn.onclick = startBlocking;
+
+      ftr.appendChild(deselBtn);
+      ftr.appendChild(selBtn);
+      ftr.appendChild(blockBtn);
     }
-
-    blockBtn.onclick = startBlocking;
-
-    ftr.appendChild(deselBtn);
-    ftr.appendChild(selBtn);
-    ftr.appendChild(blockBtn);
 
     const rateNote = document.createElement('div');
     rateNote.style.cssText = `padding:3px 12px 5px;font-size:10px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.6;background:${C.catBg};`;
-    rateNote.textContent = 'X.com 限制：每次拉黑间隔 3-5 秒 · 执行中可取消勾选，未开始的账号会跳过';
+    rateNote.textContent = isGlobalQueueView
+      ? `为了避开平台限流，拉黑会按 ${experimentalBrowseBlockActive() ? experimentSlowBlockGapText() : '3-5秒'} 间隔排队执行；${experimentCooldownSummaryText()}`
+      : '勾选账号会加入拉黑排队；为了避开平台限流，每次拉黑间隔 3-5 秒';
 
     const scriptFtr = document.createElement('div');
     scriptFtr.style.cssText = `padding:2px 12px 4px;font-size:9px;color:${C.sub};text-align:center;flex-shrink:0;opacity:0.5;background:${C.catBg};`;
@@ -2998,17 +4172,20 @@
     panel.appendChild(rateNote);
     panel.appendChild(scriptFtr);
     document.body.appendChild(panel);
+    requestAnimationFrame(updateGlobalBlockQueuePanel);
 
     // Escape key closes panel
     const closePanel = () => {
       panel.remove();
       document.getElementById('xfs-panel-dock')?.remove();
+      if (isGlobalQueueView) GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, true);
       dockIndicator = null;
       dockIndicatorLabel = null;
       dockCaption = null;
       dockRestoreBtn = null;
       dockRefreshBtn = null;
       document.removeEventListener('keydown', onEsc);
+      if (isGlobalQueueView) updateGlobalBlockQueuePanel();
     };
     const onEsc = e => { if (e.key === 'Escape') closePanel(); };
     document.addEventListener('keydown', onEsc);
@@ -3117,14 +4294,15 @@
       stopBackgroundLoad = true;
       const btn = document.getElementById('xfs-btn');
       reapplyContentRulesForVisible();
-      showPanel(scanPage(), {
-        autoBlock: true,
+      autoQueueBlockUsers(scanPage(), {
+        queueSource: 'content',
         refreshButtonIds: ['xfs-btn'],
         onBlockDone: (stats) => {
           endScanMode('content');
           reapplyContentRulesForVisible();
+          refreshGlobalQueueInlineButtons();
           applyHideAll(); // preserve any existing hidden state after blocking
-          if (btn && (!stats || stats.done + stats.failed === 0)) {
+          if (btn && (!stats || (Number(stats.queued || 0) + Number(stats.existing || 0) === 0))) {
             btn.disabled = false;
             btn.style.opacity = '';
             btn.title = '当前视图内容垃圾号自动拉黑';
@@ -3212,7 +4390,7 @@
     applyHideAll(); // keep hide state applied after scanning
     // Merge users found by the hide feature that React may have unloaded from the DOM
     mergeInto(Array.from(matchedUsersCache.values()));
-    showPanel(Array.from(acc.values()), { refreshButtonIds: ['xfs-sweep-btn'] });
+    autoQueueBlockUsers(Array.from(acc.values()), { queueSource: 'sweep', refreshButtonIds: ['xfs-sweep-btn'] });
 
     if (btn)      { btn.disabled = false; btn.style.opacity = ''; }
     if (sweepBtn) { sweepBtn.disabled = false; sweepBtn.style.opacity = ''; }
@@ -3280,7 +4458,7 @@
     collectCells(); // final pass after last scroll
 
     badge.remove();
-    showPanel(Array.from(acc.values()), { refreshButtonIds: ['xfs-list-btn'] });
+    autoQueueBlockUsers(Array.from(acc.values()), { queueSource: 'list', refreshButtonIds: ['xfs-list-btn'] });
     if (listBtn) { listBtn.disabled = false; listBtn.style.opacity = ''; }
     } finally {
       endScanMode('list');
@@ -3358,20 +4536,23 @@
         ...(cardEl ? [...cardEl.querySelectorAll('a[href]')] : []),
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
-      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchesFilters(displayName, fullText);
-      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
+      const tweetSnippet = buildUserPreviewSnippet(textEl ? getTextWithEmoji(textEl) : '', cardEl ? getTextWithEmoji(cardEl) : '', bodyLinkText);
+      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchesFilters(displayName, fullText);
+      setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(key);
       art.dataset.xfsHideMatched = (matched && !alreadyBlocked) ? '1' : '0';
       const btn = art.querySelector(`button[data-xfs-handle]`);
       if (btn) {
         btn.dataset.xfsMatched = (matched && !alreadyBlocked) ? '1' : '0';
-        if (matched && !alreadyBlocked) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits });
+        if (matched && !alreadyBlocked) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits });
         else delete btn.dataset.xfsMatchTooltip;
         updateInlineBlockButton(btn);
       }
-      if (matched && !alreadyBlocked) {
+      if (actionableMatched && !alreadyBlocked) {
         matchedHandlesInView.add(key);
-        matchedUsersCache.set(key, { handle: key, displayName, cats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], tweetSnippet: '' });
+        const user = { handle: key, displayName, cats: actionableCats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], hideOnlyReHits: [...hideOnlyReHits], tweetSnippet };
+        matchedUsersCache.set(key, user);
+        maybeAutoQueueBrowseMatchedUser(user, art);
       } else {
         matchedHandlesInView.delete(key);
         matchedUsersCache.delete(key);
@@ -3403,17 +4584,30 @@
 
   function updateInlineBlockButton(btn) {
     const isBlocked = btn.dataset.xfsState === 'blocked';
+    const queueItem = isBlocked ? null : globalBlockQueueItemForHandle(btn.dataset.xfsHandle);
+    const queueStatus = queueItem?.status || '';
+    const isQueued = ['queued', 'running'].includes(queueStatus);
+    const isFailed = queueStatus === 'failed';
     const reason = buttonMatchedReason(btn);
     const isHot = reason !== '';
     const color = reason === 'referral' ? C.referralHot : C.blockRed;
-    btn.style.border = `1.5px solid ${isBlocked ? C.mute : (isHot ? color : C.btnBorder)}`;
-    btn.style.color = isBlocked ? C.mute : (isHot ? color : C.sub);
-    btn.style.boxShadow = !isBlocked && isHot ? `0 0 0 2px ${color}40` : '';
-    btn.style.background = isBlocked ? `${C.mute}18` : 'transparent';
+    const stateColor = isBlocked ? C.mute : (isHot ? color : (isQueued ? C.nameKw : (isFailed ? C.blockRed : C.btnBorder)));
+    btn.dataset.xfsQueueStatus = queueStatus;
+    btn.textContent = isBlocked ? IBTN_CHECK_SVG : (isQueued ? '…' : (isFailed ? '!' : IBTN_BLOCK_SVG));
+    btn.style.border = `${isHot && !isBlocked ? 2.5 : 1.5}px solid ${stateColor}`;
+    btn.style.color = isBlocked ? C.mute : (isHot ? color : (isQueued ? C.nameKw : (isFailed ? C.blockRed : C.sub)));
+    btn.style.boxShadow = !isBlocked && isHot
+      ? `0 0 0 3px ${color}45,0 0 10px ${color}38`
+      : (!isBlocked && isFailed ? `0 0 0 2px ${C.blockRed}40` : '');
+    btn.style.background = isBlocked ? `${C.mute}18` : (isHot ? `${color}22` : (isQueued ? `${C.nameKw}16` : 'transparent'));
+    btn.style.opacity = isHot && !isBlocked ? '1' : btn.style.opacity || '1';
     const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : '');
     const handle = btn.dataset.xfsHandle || '';
     const details = [btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
-    btn.title = prefix + (isBlocked ? `已拉黑 · 点击取消 @${handle}` : `拉黑 @${handle}`)
+    const actionTitle = isBlocked
+      ? `已拉黑 · 点击取消 @${handle}`
+      : (isQueued ? `已在拉黑排队中 · 点击查看详情 @${handle}` : (isFailed ? `排队执行失败 · 点击重新加入 @${handle}` : `拉黑 @${handle}`));
+    btn.title = prefix + actionTitle
       + (details ? `\n\n命中规则:\n${details}` : '');
   }
 
@@ -3624,12 +4818,12 @@
         return;
       }
       progress.update(lookupHandles.length > 0
-        ? `发现 ${users.length} 个导流号，正在自动拉黑...`
-        : `使用已识别的 ${users.length} 个导流号，正在自动拉黑...`);
+        ? `发现 ${users.length} 个导流号，正在加入拉黑排队...`
+        : `使用已识别的 ${users.length} 个导流号，正在加入拉黑排队...`);
       progress.close(900);
       handedOffToBlocker = true;
-      showPanel(users, {
-        autoBlock: true,
+      autoQueueBlockUsers(users, {
+        queueSource: 'referral',
         refreshButtonIds: ['xfs-referral-scan-btn'],
         onBlockDone: () => endScanMode('referral'),
       });
@@ -3700,6 +4894,222 @@
     el.style.bottom = toolbarBottomPx(bottom);
   }
 
+  function ensureGlobalBlockQueuePanel() {
+    if (!document.body) return null;
+    let p = document.getElementById('xfs-global-block-queue');
+    if (p) return p;
+    const pos = readGlobalBlockQueuePosition();
+    p = document.createElement('div');
+    p.id = 'xfs-global-block-queue';
+    p.style.cssText = [
+      'position:fixed', `top:${pos.top}px`, `left:${pos.left}px`,
+      `width:${GLOBAL_BLOCK_QUEUE_PANEL_W}px`, 'box-sizing:border-box', 'padding:7px 8px',
+      'background:rgba(247,249,249,0.78)', `color:${C.text}`,
+      'backdrop-filter:blur(10px) saturate(135%)', '-webkit-backdrop-filter:blur(10px) saturate(135%)',
+      'border:1px solid rgba(207,217,222,0.82)', 'border-radius:8px',
+      'box-shadow:0 6px 22px rgba(15,20,25,0.10)',
+      'font-size:11px', 'line-height:1.35',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      'z-index:2147483646',
+    ].join(';');
+    document.body.appendChild(p);
+    return p;
+  }
+
+  function clampGlobalBlockQueuePosition(pos, p = document.getElementById('xfs-global-block-queue')) {
+    const w = GLOBAL_BLOCK_QUEUE_PANEL_W;
+    const h = p?.offsetHeight || 72;
+    const maxLeft = Math.max(0, window.innerWidth - w - 8);
+    const maxTop = Math.max(0, window.innerHeight - h - 8);
+    return {
+      left: Math.min(Math.max(0, Number(pos.left) || 0), maxLeft),
+      top: Math.min(Math.max(0, Number(pos.top) || 0), maxTop),
+    };
+  }
+
+  function rectsOverlap(a, b) {
+    return !!(a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top);
+  }
+
+  function avoidGlobalQueuePanelOverlap(p) {
+    const panel = document.getElementById('xfs-panel');
+    if (!panel || panel.style.display === 'none') return;
+    const pr = panel.getBoundingClientRect();
+    const qr = p.getBoundingClientRect();
+    if (!rectsOverlap(pr, qr)) return;
+    const aboveTop = pr.top - qr.height - 8;
+    if (aboveTop < 0 && !globalBlockQueueMinimized()) {
+      GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, true);
+      setTimeout(updateGlobalBlockQueuePanel, 0);
+    }
+    const next = clampGlobalBlockQueuePosition({ left: pr.left, top: Math.max(0, aboveTop) }, p);
+    p.style.left = `${next.left}px`;
+    p.style.top = `${next.top}px`;
+    p.style.right = 'auto';
+    writeGlobalBlockQueuePosition(next);
+  }
+
+  function makeGlobalBlockQueuePanelDraggable(p, handle) {
+    handle.style.cursor = 'move';
+    handle.onpointerdown = e => {
+      if (e.button != null && e.button !== 0) return;
+      if (e.target.closest('button,a,input,textarea,select')) return;
+      e.preventDefault();
+      globalQueuePanelDragging = true;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = p.offsetLeft;
+      const startTop = p.offsetTop;
+      p.setPointerCapture?.(e.pointerId);
+      const onMove = ev => {
+        const next = clampGlobalBlockQueuePosition({
+          left: startLeft + ev.clientX - startX,
+          top: startTop + ev.clientY - startY,
+        }, p);
+        p.style.left = `${next.left}px`;
+        p.style.top = `${next.top}px`;
+        p.style.right = 'auto';
+      };
+      const onUp = ev => {
+        globalQueuePanelDragging = false;
+        p.releasePointerCapture?.(ev.pointerId);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        avoidGlobalQueuePanelOverlap(p);
+        writeGlobalBlockQueuePosition({ left: p.offsetLeft, top: p.offsetTop });
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp, { once: true });
+    };
+  }
+
+  function updateGlobalBlockQueuePanel() {
+    if (globalQueuePanelDragging) return;
+    const minimized = globalBlockQueueMinimized();
+    if (!minimized) {
+      document.getElementById('xfs-global-block-queue')?.remove();
+      const panel = document.getElementById('xfs-panel');
+      if (panel?.dataset.xfsGlobalQueueView !== '1') setTimeout(() => showGlobalBlockQueueDetailPanel(false), 0);
+      return;
+    }
+    const detailPanel = document.getElementById('xfs-panel');
+    if (detailPanel?.dataset.xfsGlobalQueueView === '1') detailPanel.remove();
+    if (globalQueuePanelSuppressed) {
+      document.getElementById('xfs-global-block-queue')?.remove();
+      return;
+    }
+    const { counts } = globalBlockQueueSummary();
+    const paused = globalBlockQueuePaused();
+    const active = counts.queued + counts.running;
+    const failed = counts.failed || 0;
+    const done = counts.done || 0;
+    const round = readGlobalQueueRound();
+    const cooling = Number(round.cooldownUntil || 0) > Date.now();
+    const experimentActive = experimentalBrowseBlockActive();
+    const p = ensureGlobalBlockQueuePanel();
+    if (!p) return;
+    p.style.right = 'auto';
+    p.style.width = `${GLOBAL_BLOCK_QUEUE_PANEL_W}px`;
+    p.style.padding = '8px';
+    const pos = clampGlobalBlockQueuePosition(readGlobalBlockQueuePosition(), p);
+    p.style.left = `${pos.left}px`;
+    p.style.top = `${pos.top}px`;
+    p.style.opacity = active || counts.failed ? '1' : '0.72';
+    p.innerHTML = '';
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;flex-direction:column;align-items:stretch;gap:6px;';
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:6px;';
+    const title = document.createElement('div');
+    title.textContent = experimentActive ? '边刷边拉黑' : '拉黑排队';
+    title.style.cssText = `flex:1;min-width:0;font-weight:900;font-size:11px;line-height:1.1;color:${experimentActive ? C.blockRed : C.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+    const topActions = document.createElement('div');
+    topActions.style.cssText = 'display:flex;align-items:center;gap:4px;flex:0 0 auto;';
+    const settingsBtn = document.createElement('button');
+    settingsBtn.type = 'button';
+    settingsBtn.textContent = '设置';
+    settingsBtn.title = '打开边刷边拉黑设置';
+    settingsBtn.style.cssText = `border:1px solid ${experimentActive ? C.blockRed : C.btnBorder};border-radius:7px;background:${experimentActive ? '#fff1f1' : '#fff'};color:${experimentActive ? C.blockRed : C.sub};font-size:10px;font-weight:800;padding:2px 5px;cursor:pointer;line-height:1.2;`;
+    settingsBtn.onclick = () => {
+      closeToolsPanel();
+      showExperimentalBrowseBlockPanel();
+    };
+    topActions.appendChild(settingsBtn);
+    const dismissBtn = document.createElement('button');
+    dismissBtn.type = 'button';
+    dismissBtn.textContent = 'x';
+    dismissBtn.title = '关闭此卡片；可从排队详情再次打开';
+    dismissBtn.style.cssText = `border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.sub};font-size:10px;font-weight:800;padding:2px 5px;cursor:pointer;line-height:1.2;`;
+    dismissBtn.onclick = () => {
+      p.remove();
+    };
+    topActions.appendChild(dismissBtn);
+    topRow.appendChild(title);
+    topRow.appendChild(topActions);
+    const stats = document.createElement('div');
+    stats.textContent = `排 ${counts.queued} · 执 ${counts.running}`;
+    stats.style.cssText = `font-size:10px;font-weight:800;color:${active ? C.text : C.sub};white-space:nowrap;`;
+    const doneLine = document.createElement('div');
+    doneLine.textContent = `完 ${done} · 失 ${failed}`;
+    doneLine.style.cssText = `font-size:10px;font-weight:700;color:${failed ? C.blockRed : C.sub};white-space:nowrap;`;
+    const roundLine = document.createElement('div');
+    roundLine.textContent = globalQueueRoundText(round);
+    roundLine.title = cooling ? '队列正在自动冷却，结束后会继续执行' : `节奏控制：${experimentCooldownSummaryText()}`;
+    roundLine.style.cssText = `font-size:10px;font-weight:800;color:${cooling ? C.blockRed : C.sub};white-space:nowrap;`;
+    const timing = effectiveExperimentTimingConfig();
+    const timingLine = document.createElement('div');
+    timingLine.textContent = `时 ${experimentActive ? experimentSlowBlockGapText() : '3-5秒'} · 冷 ${formatGlobalQueueCooldown(timing.shortCooldownMs)}/${formatGlobalQueueCooldown(timing.longCooldownMs)}`;
+    timingLine.title = `当前时间设置：间隔 ${experimentActive ? experimentSlowBlockGapText() : '3-5秒'}；每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停 ${formatGlobalQueueCooldown(timing.shortCooldownMs)}；每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停 ${formatGlobalQueueCooldown(timing.longCooldownMs)}`;
+    timingLine.style.cssText = `font-size:9px;font-weight:700;color:${C.sub};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+    const state = document.createElement('span');
+    state.textContent = paused ? '暂停' : (cooling ? '冷却中' : (counts.running ? '执行中' : (counts.queued ? '等待' : '空闲')));
+    state.style.cssText = `color:${paused || cooling ? C.blockRed : (counts.running ? C.nameKw : C.sub)};font-size:10px;font-weight:800;`;
+    const resumeBtn = document.createElement('button');
+    resumeBtn.type = 'button';
+    resumeBtn.textContent = paused ? '继续' : '暂停';
+    resumeBtn.title = paused ? '重新登录后点击继续拉黑排队' : '暂停拉黑排队';
+    resumeBtn.style.cssText = `border:1px solid ${paused ? C.blockRed : C.btnBorder};border-radius:7px;background:${paused ? '#fff1f1' : '#fff'};color:${paused ? C.blockRed : C.sub};font-size:10px;font-weight:800;padding:3px 5px;cursor:pointer;width:100%;`;
+    resumeBtn.onclick = () => {
+      if (paused && !getCsrf()) {
+        showToast('仍未找到登录凭证，请先重新登录 X/Twitter', true);
+        return;
+      }
+      setGlobalBlockQueuePaused(!paused);
+    };
+    const minBtn = document.createElement('button');
+    minBtn.type = 'button';
+    minBtn.textContent = '展开';
+    minBtn.title = minimized ? '展开拉黑排队' : '最小化拉黑排队';
+    minBtn.style.cssText = `border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.sub};font-size:10px;padding:3px 5px;cursor:pointer;width:100%;`;
+    minBtn.onclick = () => setGlobalBlockQueueMinimized(!minimized);
+    hdr.appendChild(topRow);
+    hdr.appendChild(stats);
+    hdr.appendChild(doneLine);
+    hdr.appendChild(roundLine);
+    hdr.appendChild(timingLine);
+    hdr.appendChild(state);
+    hdr.appendChild(resumeBtn);
+    hdr.appendChild(minBtn);
+    makeGlobalBlockQueuePanelDraggable(p, hdr);
+    p.appendChild(hdr);
+    avoidGlobalQueuePanelOverlap(p);
+  }
+
+  function startGlobalBlockQueueMonitor() {
+    ensureGlobalBlockQueuePanel();
+    syncCompletedGlobalBlocksToThisTab();
+    updateGlobalBlockQueuePanel();
+    refreshGlobalQueueInlineButtons();
+    maybeStartGlobalBlockQueueWorker();
+    if (globalQueueUiTimer) clearInterval(globalQueueUiTimer);
+    globalQueueUiTimer = setInterval(() => {
+      syncCompletedGlobalBlocksToThisTab();
+      updateGlobalBlockQueuePanel();
+      refreshGlobalQueueInlineButtons();
+      maybeStartGlobalBlockQueueWorker();
+    }, 1200);
+  }
+
   function updateToolbarPositions() {
     [
       ['xfs-stack-toggle-btn', 160, 0],
@@ -3716,13 +5126,22 @@
       ['xfs-btn-sep-1', 302, 2],
       ['xfs-btn-sep-2', 226, 2],
       ['xfs-tools-panel', 166, 40],
-    ].forEach(([id, bottom, rightDelta]) => setToolbarPosition(document.getElementById(id), bottom, rightDelta));
+    ].forEach(([id, bottom, rightDelta]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (bottom == null) el.style.right = toolbarRightPx(rightDelta);
+      else setToolbarPosition(el, bottom, rightDelta);
+    });
   }
 
   function saveToolbarPosition() {
     clampToolbarPosition();
     GM_setValue('toolbar_right', toolbarRight);
     GM_setValue('toolbar_base_bottom', toolbarBaseBottom);
+  }
+
+  function toolbarExperimentWarningTitle() {
+    return '边刷边拉黑模式开启, 可以在设置中关闭';
   }
 
   function mkIconBtn(id, svg, title, bottom, color, onclick) {
@@ -3759,7 +5178,7 @@
       b.style.opacity = '';
       b.style.pointerEvents = '';
       b.textContent = DONE_SVG;
-      b.title = '拉黑完成，点击刷新页面';
+      b.title = '已加入拉黑排队，点击刷新页面';
       b.style.border = `2px solid ${C.mute}`;
       b.style.color = C.mute;
       b.style.background = `${C.mute}18`;
@@ -3825,7 +5244,7 @@
     const hdr = document.createElement('div');
     hdr.style.cssText = 'display:flex;align-items:center;gap:8px;';
     const title = document.createElement('div');
-    title.textContent = '正则测试';
+    title.textContent = '正则规则测试';
     title.style.cssText = `flex:1;font-size:13px;font-weight:800;color:${C.text};`;
     const close = document.createElement('button');
     close.textContent = '×';
@@ -3836,14 +5255,122 @@
     hdr.appendChild(close);
     p.appendChild(hdr);
 
-    function mkField(labelText, exampleText, placeholder) {
+    const intro = document.createElement('div');
+    intro.textContent = '这里只做临时测试。请先反复测试并确认命中稳定、没有误命中，再点右侧小按钮加入正式规则，避免误伤正常用户。';
+    intro.style.cssText = `font-size:11px;line-height:1.45;color:${C.sub};`;
+    p.appendChild(intro);
+
+    function setRuleTestStatus(statusEl, text, color = C.sub) {
+      statusEl.textContent = text;
+      statusEl.style.color = color;
+    }
+
+    function hasKeywordValue(list, value) {
+      const target = _normKw(value);
+      return list.some(item => _normKw(item) === target);
+    }
+
+    function addKeywordFromField(raw, type, statusEl) {
+      const value = String(raw || '').trim();
+      const label = type === 'name' ? '用户名关键词' : '内容关键词';
+      if (!value) {
+        setRuleTestStatus(statusEl, `请输入要加入${label}的文本`, C.blockRed);
+        return;
+      }
+      const parsed = _regexPatternParts(value);
+      const keyword = (parsed.scope !== 'both' ? parsed.pat : value).trim();
+      if (!keyword) {
+        setRuleTestStatus(statusEl, `请输入要加入${label}的文本`, C.blockRed);
+        return;
+      }
+      const list = type === 'name' ? SUSPECT_NAME_KWS : SUSPECT_KWS;
+      if (hasKeywordValue(list, keyword)) {
+        setRuleTestStatus(statusEl, `${label}已存在：${keyword}`, C.sub);
+        showToast(`${label}已存在`, false);
+        return;
+      }
+      list.push(keyword);
+      saveKws();
+      setRuleTestStatus(statusEl, `已加入${label}：${keyword}`, C.regexKw);
+      showToast(`已加入${label}`, false);
+    }
+
+    function addScopedRegexFromField(raw, scope, statusEl) {
+      const value = String(raw || '').trim();
+      const scopeLabel = scope === 'name' ? '用户名' : '内容';
+      const targetScope = scope === 'name' ? 'name' : 'body';
+      if (!value) {
+        setRuleTestStatus(statusEl, `请输入要加入${scopeLabel}正则的规则`, C.blockRed);
+        return;
+      }
+      const parsed = _regexPatternParts(value);
+      if (!parsed.pat) {
+        setRuleTestStatus(statusEl, `请输入有效的${scopeLabel}正则`, C.blockRed);
+        return;
+      }
+      if (parsed.scope !== 'both' && parsed.scope !== targetScope) {
+        setRuleTestStatus(statusEl, `${scopeLabel}测试框只接受 ${scope === 'name' ? 'name:' : 'content:'} 前缀或不带前缀的正则`, C.blockRed);
+        return;
+      }
+      try {
+        new RegExp(parsed.pat, 'mu');
+      } catch (err) {
+        setRuleTestStatus(statusEl, `正则无效：${err?.message || err}`, C.blockRed);
+        return;
+      }
+      const normalized = `${scope === 'name' ? 'name' : 'content'}:${parsed.pat}`;
+      if (SUSPECT_RE_KWS.some(item => String(item).trim() === normalized)) {
+        setRuleTestStatus(statusEl, `正则已存在：${normalized}`, C.sub);
+        showToast('正则规则已存在', false);
+        return;
+      }
+      SUSPECT_RE_KWS.push(normalized);
+      saveKws();
+      setRuleTestStatus(statusEl, `已加入正则：${normalized}`, C.regexKw);
+      showToast('已加入正则规则', false);
+    }
+
+    function addHideOnlyRegexFromField(raw, statusEl) {
+      const value = String(raw || '').trim();
+      if (!value) {
+        setRuleTestStatus(statusEl, '请输入要加入只隐藏正则的规则', C.blockRed);
+        return;
+      }
+      const parsed = _regexPatternParts(value);
+      if (!parsed.pat) {
+        setRuleTestStatus(statusEl, '请输入有效的只隐藏正则', C.blockRed);
+        return;
+      }
+      if (parsed.scope !== 'both' && parsed.scope !== 'body') {
+        setRuleTestStatus(statusEl, '只隐藏正则只接受 content: 前缀或不带前缀的内容正则', C.blockRed);
+        return;
+      }
+      try {
+        new RegExp(parsed.pat, 'mu');
+      } catch (err) {
+        setRuleTestStatus(statusEl, `正则无效：${err?.message || err}`, C.blockRed);
+        return;
+      }
+      const normalized = `content:${parsed.pat}`;
+      if (HIDE_ONLY_RE_KWS.some(item => String(item).trim() === normalized)) {
+        setRuleTestStatus(statusEl, `只隐藏正则已存在：${normalized}`, C.sub);
+        showToast('只隐藏正则已存在', false);
+        return;
+      }
+      HIDE_ONLY_RE_KWS.push(normalized);
+      saveKws();
+      setRuleTestStatus(statusEl, `已加入只隐藏正则：${normalized}`, C.mute);
+      showToast('已加入只隐藏正则', false);
+    }
+
+    function mkField(labelText, exampleText, placeholder, accent) {
       const wrap = document.createElement('label');
       wrap.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:6px;';
       const label = document.createElement('span');
       label.textContent = labelText;
-      label.style.cssText = `font-size:11px;font-weight:700;color:${C.sub};`;
+      label.style.cssText = `font-size:11px;font-weight:700;color:${accent};`;
       const example = document.createElement('button');
       example.type = 'button';
       example.textContent = `例：${exampleText}`;
@@ -3865,32 +5392,146 @@
         input.value = exampleText;
         input.focus();
       };
+      const quickRow = document.createElement('div');
+      quickRow.style.cssText = 'display:flex;gap:6px;align-items:center;justify-content:space-between;';
       wrap.appendChild(row);
       wrap.appendChild(input);
-      return { wrap, input };
+      wrap.appendChild(quickRow);
+      return { wrap, input, quickRow };
     }
 
-    const nameField = mkField('用户名正则', '互fo', '+ 用户名正则');
-    const contentField = mkField('内容正则', '想找个|哥哥', '+ 内容正则');
+    function mkFieldTestBtn(text, color) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = text;
+      btn.style.cssText = `border:1px solid ${color};background:${color};color:#fff;border-radius:10px;padding:5px 12px;font-size:11px;font-weight:800;line-height:1.45;cursor:pointer;box-shadow:0 3px 10px ${color}33;`;
+      return btn;
+    }
+
+    function mkMiniBtn(text, color) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = text;
+      btn.style.cssText = `border:1px solid ${color};background:#fff;color:${color};border-radius:999px;padding:1px 6px;font-size:9px;font-weight:700;line-height:1.45;cursor:pointer;`;
+      return btn;
+    }
+
+    const nameField = mkField('测试用户名范围', '互fo', '例如：互fo', C.nameKw);
+    const contentField = mkField('测试内容范围', '想找个|哥哥', '例如：想找个|哥哥', C.blockRed);
     p.appendChild(nameField.wrap);
     p.appendChild(contentField.wrap);
 
     const nameStatus = document.createElement('div');
-    nameStatus.textContent = '用户名待测试';
+    nameStatus.textContent = '用户名范围待测试';
     nameStatus.style.cssText = `min-height:16px;font-size:11px;color:${C.sub};line-height:1.35;`;
     const contentStatus = document.createElement('div');
-    contentStatus.textContent = '内容待测试';
+    contentStatus.textContent = '内容范围待测试';
     contentStatus.style.cssText = nameStatus.style.cssText;
+
+    const testNameBtn = mkFieldTestBtn('测试用户名范围', C.nameKw);
+    testNameBtn.title = '先测试当前用户名范围正则';
+    testNameBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      const nameRaw = nameField.input.value.trim();
+      if (!nameRaw) {
+        setRuleTestStatus(nameStatus, '请输入用于测试的用户名正则', C.blockRed);
+        return;
+      }
+      setRuleTestStatus(nameStatus, '正在测试用户名范围...', C.sub);
+      let result;
+      try {
+        result = runNameRuleTest(nameRaw);
+      } catch (err) {
+        const msg = err?.message || String(err || 'unknown error');
+        setRuleTestStatus(nameStatus, `测试失败：${msg}`, C.blockRed);
+        showToast(`正则测试失败：${msg}`, true);
+        return;
+      }
+      applyRuleTestResult(result, nameStatus, '用户名', result.nameHits);
+    };
+
+    const nameAddGroup = document.createElement('div');
+    nameAddGroup.style.cssText = 'display:flex;gap:4px;align-items:center;margin-left:auto;justify-content:flex-end;flex-wrap:wrap;';
+
+    const addNameKwBtn = mkMiniBtn('+ 用户名关键词', C.nameKw);
+    addNameKwBtn.title = '把当前输入按普通文本加入用户名关键词';
+    addNameKwBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      addKeywordFromField(nameField.input.value, 'name', nameStatus);
+    };
+    const addNameReBtn = mkMiniBtn('+ name:正则', C.regexKw);
+    addNameReBtn.title = '把当前输入加入正式正则规则，并限定为用户名范围';
+    addNameReBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      addScopedRegexFromField(nameField.input.value, 'name', nameStatus);
+    };
+    nameField.quickRow.appendChild(testNameBtn);
+    nameAddGroup.appendChild(addNameKwBtn);
+    nameAddGroup.appendChild(addNameReBtn);
+    nameField.quickRow.appendChild(nameAddGroup);
+
+    const testContentBtn = mkFieldTestBtn('测试内容范围', C.blockRed);
+    testContentBtn.title = '先测试当前内容范围正则';
+    testContentBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      const contentRaw = contentField.input.value.trim();
+      if (!contentRaw) {
+        setRuleTestStatus(contentStatus, '请输入用于测试的内容正则', C.blockRed);
+        return;
+      }
+      setRuleTestStatus(contentStatus, '正在测试内容范围...', C.sub);
+      let result;
+      try {
+        result = runContentRuleTest(contentRaw);
+      } catch (err) {
+        const msg = err?.message || String(err || 'unknown error');
+        setRuleTestStatus(contentStatus, `测试失败：${msg}`, C.blockRed);
+        showToast(`正则测试失败：${msg}`, true);
+        return;
+      }
+      applyRuleTestResult(result, contentStatus, '内容', result.contentHits);
+    };
+
+    const contentAddGroup = document.createElement('div');
+    contentAddGroup.style.cssText = 'display:flex;gap:4px;align-items:center;margin-left:auto;justify-content:flex-end;flex-wrap:wrap;';
+
+    const addContentKwBtn = mkMiniBtn('+ 内容关键词', C.blockRed);
+    addContentKwBtn.title = '把当前输入按普通文本加入内容关键词';
+    addContentKwBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      addKeywordFromField(contentField.input.value, 'content', contentStatus);
+    };
+    const addContentReBtn = mkMiniBtn('+ content:正则', C.regexKw);
+    addContentReBtn.title = '把当前输入加入正式正则规则，并限定为内容范围';
+    addContentReBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      addScopedRegexFromField(contentField.input.value, 'content', contentStatus);
+    };
+    const addHideOnlyReBtn = mkMiniBtn('+ 只隐藏正则', C.mute);
+    addHideOnlyReBtn.title = '把当前输入加入只隐藏不拉黑的内容正则；适合高误伤规则';
+    addHideOnlyReBtn.onclick = e => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      addHideOnlyRegexFromField(contentField.input.value, contentStatus);
+    };
+    contentField.quickRow.appendChild(testContentBtn);
+    contentAddGroup.appendChild(addContentKwBtn);
+    contentAddGroup.appendChild(addContentReBtn);
+    contentAddGroup.appendChild(addHideOnlyReBtn);
+    contentField.quickRow.appendChild(contentAddGroup);
+
+    const caution = document.createElement('div');
+    caution.textContent = '建议先拿当前页面多条回复详细测试，确认命中稳定且误命中为 0，再加入关键词或正则。高误伤但又值得先折叠页面噪音的规则，请加到“只隐藏正则”，不要直接进自动拉黑流。';
+    caution.style.cssText = `font-size:10px;line-height:1.45;color:${C.blockRed};background:${C.blockRed}10;border:1px solid ${C.blockRed}33;border-radius:8px;padding:7px 8px;`;
+
     const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;gap:8px;align-items:center;';
-    const testNameBtn = document.createElement('button');
-    testNameBtn.type = 'button';
-    testNameBtn.textContent = '测试用户名';
-    testNameBtn.style.cssText = `flex:1;background:${C.nameKw};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;`;
-    const testContentBtn = document.createElement('button');
-    testContentBtn.type = 'button';
-    testContentBtn.textContent = '测试内容';
-    testContentBtn.style.cssText = `flex:1;background:${C.blockRed};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;`;
+    actions.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;';
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
     clearBtn.textContent = '关闭';
@@ -3899,67 +5540,17 @@
 
     function applyRuleTestResult(result, statusEl, label, hitCount) {
       if (result.error) {
-        statusEl.textContent = result.error;
-        statusEl.style.color = C.blockRed;
+        setRuleTestStatus(statusEl, result.error, C.blockRed);
         return;
       }
-      statusEl.textContent = `${label}：已扫 ${result.scanned} 条 · 命中 ${hitCount}${result.failed ? ` · 跳过 ${result.failed}` : ''}`;
-      statusEl.style.color = hitCount ? C.regexKw : C.sub;
+      setRuleTestStatus(statusEl, `${label}：已扫 ${result.scanned} 条 · 命中 ${hitCount}${result.failed ? ` · 跳过 ${result.failed}` : ''}`, hitCount ? C.regexKw : C.sub);
       showToast(`正则测试：${label}命中 ${hitCount}`, false);
     }
 
-    testNameBtn.onclick = e => {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
-      const nameRaw = nameField.input.value.trim();
-      if (!nameRaw) {
-        nameStatus.textContent = '请输入用户名正则';
-        nameStatus.style.color = C.blockRed;
-        return;
-      }
-      nameStatus.textContent = '正在测试用户名...';
-      nameStatus.style.color = C.sub;
-      let result;
-      try {
-        result = runNameRuleTest(nameRaw);
-      } catch (err) {
-        const msg = err?.message || String(err || 'unknown error');
-        nameStatus.textContent = `测试失败：${msg}`;
-        nameStatus.style.color = C.blockRed;
-        showToast(`正则测试失败：${msg}`, true);
-        return;
-      }
-      applyRuleTestResult(result, nameStatus, '用户名', result.nameHits);
-    };
-
-    testContentBtn.onclick = e => {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
-      const contentRaw = contentField.input.value.trim();
-      if (!contentRaw) {
-        contentStatus.textContent = '请输入内容正则';
-        contentStatus.style.color = C.blockRed;
-        return;
-      }
-      contentStatus.textContent = '正在测试内容...';
-      contentStatus.style.color = C.sub;
-      let result;
-      try {
-        result = runContentRuleTest(contentRaw);
-      } catch (err) {
-        const msg = err?.message || String(err || 'unknown error');
-        contentStatus.textContent = `测试失败：${msg}`;
-        contentStatus.style.color = C.blockRed;
-        showToast(`正则测试失败：${msg}`, true);
-        return;
-      }
-      applyRuleTestResult(result, contentStatus, '内容', result.contentHits);
-    };
-    actions.appendChild(testNameBtn);
-    actions.appendChild(testContentBtn);
     actions.appendChild(clearBtn);
     p.appendChild(nameStatus);
     p.appendChild(contentStatus);
+    p.appendChild(caution);
     p.appendChild(actions);
     document.body.appendChild(p);
   }
@@ -3969,6 +5560,7 @@
       '两类账号说明',
       '',
       '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
+      '只隐藏正则：也是按回复正文匹配，但命中后只隐藏，不会仅因这条规则进入自动拉黑候选。适合误伤偏高、但页面噪音很重的模式。',
       '',
       '导流号：根据账号主页里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角拉黑按钮会变橙色。',
@@ -3976,8 +5568,140 @@
       '',
       '拉黑新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的拉黑候选。日期选择框默认是一个月之前的今天。它需要额外查询主页，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
-      '内容扫描按钮会打开确认面板；导流扫描按钮会直接拉黑当前视图命中的导流号。',
+      '内容扫描和导流扫描会把命中的账号加入拉黑排队，排队执行以避开平台限流。',
     ].join('\n'));
+  }
+
+  function showExperimentalBrowseBlockPanel() {
+    document.getElementById('xfs-experiment-panel')?.remove();
+    const state = readExperimentalBrowseBlockState();
+    const active = experimentalBrowseBlockActive();
+    const p = document.createElement('div');
+    p.id = 'xfs-experiment-panel';
+    p.style.cssText = [
+      'position:fixed', `right:${toolbarRightPx(40)}`, `bottom:${toolbarBottomPx(166)}`,
+      'width:min(430px, calc(100vw - 24px))', 'box-sizing:border-box',
+      'background:rgba(255,255,255,0.98)', `color:${C.text}`,
+      `border:1px solid ${C.blockRed}`, 'border-radius:8px',
+      'box-shadow:0 8px 28px rgba(0,0,0,0.22)',
+      'padding:10px', 'z-index:2147483647',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      'font-size:12px', 'display:flex', 'flex-direction:column', 'gap:8px',
+    ].join(';');
+    const title = document.createElement('div');
+    title.textContent = '边刷边拉黑';
+    title.style.cssText = `font-size:13px;font-weight:800;color:${C.blockRed};`;
+    const warn = document.createElement('div');
+    warn.textContent = '危险：该功能会在浏览时把命中当前关键词/正则规则的账号自动加入拉黑排队，可能大量误伤。只有在这些规则长期测试低误伤率后才应该开启。';
+    warn.style.cssText = `padding:8px;border:1px solid ${C.blockRed};border-radius:8px;background:#fff1f1;color:${C.blockRed};line-height:1.45;font-weight:700;`;
+    const note = document.createElement('div');
+    note.style.cssText = `color:${C.sub};line-height:1.45;`;
+    const timingWrap = document.createElement('div');
+    timingWrap.style.cssText = `border:1px solid ${C.btnBorder};border-radius:8px;padding:8px;background:#fff;display:flex;flex-direction:column;gap:7px;`;
+    const timingTitle = document.createElement('div');
+    timingTitle.textContent = '时间设置';
+    timingTitle.style.cssText = `font-size:12px;font-weight:800;color:${C.text};`;
+    const timingSummary = document.createElement('div');
+    timingSummary.style.cssText = `font-size:10px;line-height:1.45;color:${C.sub};`;
+    const timingAdvice = document.createElement('div');
+    timingAdvice.textContent = `如果经常被平台登出，说明风控偏紧。建议先把时间至少调到：基础间隔 15 秒、每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停 30 秒、每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停 5 分钟；如果还是容易掉登录，就继续往上加。可以另开一个 X/Twitter 页面挂后台，让它慢慢跑。`;
+    timingAdvice.style.cssText = `font-size:10px;line-height:1.45;color:${C.sub};padding:6px 7px;border-radius:7px;background:${C.catBg};`;
+    const timingGrid = document.createElement('div');
+    timingGrid.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:6px 8px;align-items:center;';
+
+    function mkTimingInput(labelText, unitText, min, max) {
+      const label = document.createElement('div');
+      label.textContent = labelText;
+      label.style.cssText = `font-size:11px;color:${C.text};`;
+      const wrap = document.createElement('label');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = '1';
+      input.style.cssText = `width:56px;border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.text};font-size:11px;padding:4px 6px;`;
+      const unit = document.createElement('span');
+      unit.textContent = unitText;
+      unit.style.cssText = `font-size:11px;color:${C.sub};white-space:nowrap;`;
+      wrap.appendChild(input);
+      wrap.appendChild(unit);
+      timingGrid.appendChild(label);
+      timingGrid.appendChild(wrap);
+      return input;
+    }
+
+    const slowInput = mkTimingInput('基础间隔', '秒', 15, 600);
+    const shortInput = mkTimingInput(`每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停时长`, '秒', 30, 1800);
+    const longInput = mkTimingInput(`每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停时长`, '分钟', 5, 120);
+
+    function syncTimingUi() {
+      const current = effectiveExperimentTimingConfig();
+      const expiresText = state.expiresAt ? new Date(state.expiresAt).toLocaleString() : '未开启';
+      slowInput.value = String(Math.round(current.slowBlockDelayMs / 1000));
+      shortInput.value = String(Math.round(current.shortCooldownMs / 1000));
+      longInput.value = String(Math.round(current.longCooldownMs / 60000));
+      timingSummary.textContent = `当前生效：间隔 ${experimentSlowBlockGapText()}；${experimentCooldownSummaryText()}。实际执行时还会额外加随机抖动。这里只改时长，不改每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个 / 每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个的触发次数。`;
+      note.textContent = active
+        ? `当前已开启。过期时间：${expiresText}。执行拉黑会使用你当前设置的时间，并强制跳过会员账号。`
+        : '开启后仅在当前浏览周期有效；所有 X/Twitter 标签页共享状态。关闭所有标签页后下次进入会自动关闭，最晚 24 小时自动关闭。';
+    }
+
+    function persistTimingUi() {
+      saveExperimentTimingConfig({
+        slowBlockDelayMs: Number(slowInput.value || 0) * 1000,
+        shortCooldownMs: Number(shortInput.value || 0) * 1000,
+        longCooldownMs: Number(longInput.value || 0) * 60 * 1000,
+      });
+      syncTimingUi();
+    }
+
+    [slowInput, shortInput, longInput].forEach(input => {
+      input.onchange = persistTimingUi;
+      input.onblur = persistTimingUi;
+    });
+    timingWrap.appendChild(timingTitle);
+    timingWrap.appendChild(timingGrid);
+    timingWrap.appendChild(timingSummary);
+    timingWrap.appendChild(timingAdvice);
+    syncTimingUi();
+    const confirmRow = document.createElement('label');
+    confirmRow.style.cssText = 'display:flex;align-items:flex-start;gap:7px;line-height:1.35;';
+    const confirm = document.createElement('input');
+    confirm.type = 'checkbox';
+    confirm.style.cssText = 'margin-top:2px;accent-color:#f4212e;';
+    const confirmText = document.createElement('span');
+    confirmText.textContent = '我确认这些关键词/正则已经长期测试为低误伤，并接受误伤账号被加入拉黑排队的风险。';
+    confirmRow.appendChild(confirm);
+    confirmRow.appendChild(confirmText);
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    const enableBtn = document.createElement('button');
+    enableBtn.type = 'button';
+    enableBtn.textContent = active ? '重新开启 24 小时' : '开启边刷边拉黑';
+    enableBtn.style.cssText = `flex:1;background:${C.blockRed};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:800;cursor:pointer;`;
+    enableBtn.onclick = () => {
+      if (!confirm.checked) {
+        showToast('必须先确认误伤风险', true);
+        return;
+      }
+      enableExperimentalBrowseBlock();
+      p.remove();
+    };
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '收起';
+    closeBtn.style.cssText = `background:#fff;color:${C.sub};border:1px solid ${C.btnBorder};border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;`;
+    closeBtn.onclick = () => p.remove();
+    actions.appendChild(enableBtn);
+    actions.appendChild(closeBtn);
+    p.appendChild(title);
+    p.appendChild(warn);
+    p.appendChild(note);
+    p.appendChild(timingWrap);
+    p.appendChild(confirmRow);
+    p.appendChild(actions);
+    document.body.appendChild(p);
   }
 
   function showToolsPanel() {
@@ -4097,7 +5821,7 @@
     remoteTitle.textContent = '远程规则订阅';
     remoteTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.nameKw};`;
     const remoteNote = document.createElement('div');
-    remoteNote.textContent = '默认关闭。开启后同步内容、用户名和正则三类远程规则；失败时沿用本地缓存。远程正则可能误伤，开启前要谨慎。';
+    remoteNote.textContent = '默认关闭。开启后同步内容、用户名、正则和只隐藏正则四类远程规则；失败时沿用本地缓存。垃圾号经常变化形式，建议打开远程规则定义。';
     remoteNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const remoteStatus = document.createElement('div');
     remoteStatus.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};word-break:break-word;`;
@@ -4128,7 +5852,7 @@
     const youngWrap = document.createElement('div');
     youngWrap.style.cssText = `border:1px solid ${C.blockRed};background:#fff7f7;border-radius:8px;padding:7px;display:flex;flex-direction:column;gap:6px;`;
     const youngTitle = document.createElement('div');
-    youngTitle.textContent = '高误伤：拉黑新号';
+    youngTitle.textContent = '高误伤：屏蔽新用户';
     youngTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.blockRed};`;
     const youngNote = document.createElement('div');
     youngNote.textContent = '新号会进入橙标和导流扫描拉黑候选；需要逐个查主页，速度慢，容易限流，新号不一定是垃圾号。';
@@ -4208,13 +5932,50 @@
     youngRow.appendChild(youngRowText);
     youngRow.appendChild(youngAccountSelect);
     youngRow.appendChild(youngDateInput);
+    const browseBlockBtnRow = document.createElement('div');
+    browseBlockBtnRow.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
+    const browseBlockBtn = mkToolBtn('', () => {
+      closeToolsPanel();
+      showExperimentalBrowseBlockPanel();
+    });
+    browseBlockBtn.style.flex = '1';
+    const browseBlockStopBtn = document.createElement('button');
+    browseBlockStopBtn.type = 'button';
+    browseBlockStopBtn.textContent = '停止';
+    browseBlockStopBtn.style.cssText = `background:#fff;color:${C.blockRed};border:1px solid ${C.blockRed};border-radius:7px;font-size:11px;font-weight:800;padding:0 10px;cursor:pointer;white-space:nowrap;`;
+    browseBlockStopBtn.onclick = () => {
+      if (!experimentalBrowseBlockActive()) return;
+      disableExperimentalBrowseBlock('边刷边拉黑已关闭，拉黑队列会继续保留', { hideQueuePanel: false });
+      refreshBrowseBlockEntry();
+    };
+    function refreshBrowseBlockEntry() {
+      const active = experimentalBrowseBlockActive();
+      browseBlockBtn.textContent = `边刷边拉黑：${active ? '开' : '关'}`;
+      browseBlockBtn.style.borderColor = active ? C.blockRed : C.btnBorder;
+      browseBlockBtn.style.color = active ? C.blockRed : C.sub;
+      browseBlockBtn.style.background = active ? '#fff1f1' : '#fff';
+      browseBlockBtn.title = '高误伤危险功能：浏览时把命中当前规则的账号自动加入拉黑排队，开启前需要确认风险。';
+      browseBlockStopBtn.style.display = active ? '' : 'none';
+      browseBlockStopBtn.disabled = !active;
+      browseBlockStopBtn.style.opacity = active ? '1' : '0.45';
+      browseBlockStopBtn.style.cursor = active ? 'pointer' : 'default';
+      browseBlockStopBtn.title = active ? '立即停止边刷边拉黑，保留现有拉黑队列' : '边刷边拉黑当前未开启';
+    }
+    const browseBlockNote = document.createElement('div');
+    browseBlockNote.textContent = '边刷边拉黑会按当前规则自动加队列，开启前必须确认低误伤。';
+    browseBlockNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.blockRed};`;
     youngWrap.appendChild(youngTitle);
     youngWrap.appendChild(youngAccountBtn);
     youngDetailWrap.appendChild(youngModeSelect);
     youngDetailWrap.appendChild(youngRow);
     youngDetailWrap.appendChild(youngNote);
     youngWrap.appendChild(youngDetailWrap);
+    browseBlockBtnRow.appendChild(browseBlockBtn);
+    browseBlockBtnRow.appendChild(browseBlockStopBtn);
+    youngWrap.appendChild(browseBlockBtnRow);
+    youngWrap.appendChild(browseBlockNote);
     refreshYoungAccountControls();
+    refreshBrowseBlockEntry();
 
     const editBtn = mkToolBtn('关键词定义', () => {
       closeToolsPanel();
@@ -4223,7 +5984,7 @@
     editBtn.style.borderColor = C.regexKw;
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
-    editBtn.title = '打开内容关键词、用户名关键词和正则规则编辑面板';
+    editBtn.title = '打开内容关键词、用户名关键词、正则和只隐藏正则编辑面板';
     const statsBtn = mkToolBtn('关键词命中统计', showHideRuleStatsPanel);
     statsBtn.style.borderColor = C.suspect;
     statsBtn.style.color = C.suspect;
@@ -4234,7 +5995,7 @@
     });
     ruleTestBtn.style.borderColor = C.regexKw;
     ruleTestBtn.style.color = C.regexKw;
-    ruleTestBtn.title = '临时测试用户名和内容正则，不写入规则';
+    ruleTestBtn.title = '打开正则规则测试面板；可测试后直接加入用户名关键词、内容关键词或 scoped 正则';
     remoteWrap.style.gridRow = 'span 4';
     youngWrap.style.gridRow = 'span 4';
     p.appendChild(editBtn);
@@ -4330,24 +6091,36 @@
         ...(cardEl  ? [...cardEl.querySelectorAll('a[href]')]  : []),
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
+      const tweetSnippet = buildUserPreviewSnippet(textEl ? getTextWithEmoji(textEl) : '', cardEl ? getTextWithEmoji(cardEl) : '', bodyLinkText);
 
       const isProtectedVerified = isProtectedVerifiedArticle(art);
       const allowFilterHighlight = location.pathname !== '/home';
       const matchInfo = allowFilterHighlight && !isProtectedVerified
         ? matchesFilters(displayName, fullText)
-        : { matched: false, cats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [] };
-      const { matched, cats, heartHits, nameKwHits, kwHits, reHits } = matchInfo;
+        : { matched: false, actionableMatched: false, cats: new Set(), actionableCats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [], hideOnlyReHits: [] };
+      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchInfo;
       if (isProtectedVerified) clearProtectedVerifiedArticleState(art);
-      else setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits });
+      else setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
       const isOP = art === firstArt;
       art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
       if (alreadyBlocked) art.dataset.xfsReferralAccount = '0';
       else if (!isProtectedVerified) scheduleReferralCheck(art, handle, isOP, displayName);
-      if (!isOP && matched && !alreadyBlocked && /\/status\/\d/.test(location.pathname)) {
+      if (!isOP && actionableMatched && !alreadyBlocked && /\/status\/\d/.test(location.pathname)) {
         matchedHandlesInView.add(handle);
         if (!matchedUsersCache.has(handle))
-          matchedUsersCache.set(handle, { handle, displayName, cats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], tweetSnippet: '' });
+          matchedUsersCache.set(handle, { handle, displayName, cats: actionableCats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], hideOnlyReHits: [...hideOnlyReHits], tweetSnippet });
+        maybeAutoQueueBrowseMatchedUser({
+          handle,
+          displayName,
+          cats: actionableCats,
+          heartHits: [...heartHits],
+          nameKwHits: [...nameKwHits],
+          kwHits: [...kwHits],
+          reHits: [...reHits],
+          hideOnlyReHits: [...hideOnlyReHits],
+          tweetSnippet,
+        }, art);
       }
 
       if (alreadyBlocked) {
@@ -4421,12 +6194,17 @@
       btn.onclick = async e => {
         e.preventDefault(); e.stopPropagation();
         if (btn.disabled) return;
-        const csrf = getCsrf();
-        if (!csrf) { showToast('未找到登录凭证（ct0 cookie）', true); return; }
         const isBlocked = btn.dataset.xfsState === 'blocked';
+        const queueItem = isBlocked ? null : globalBlockQueueItemForHandle(handle);
+        if (['queued', 'running'].includes(queueItem?.status)) {
+          showToast(`@${handle} 已在拉黑排队中`, false);
+          return;
+        }
         btn.disabled = true; btn.style.opacity = '0.35';
 
         if (isBlocked) {
+          const csrf = getCsrf();
+          if (!csrf) { btn.disabled = false; btn.style.opacity = '1'; showToast('未找到登录凭证（ct0 cookie）', true); return; }
           try {
             await unblockUser(handle, csrf);
             blockedHandles.delete(handle);
@@ -4445,30 +6223,14 @@
             showToast(`取消拉黑 @${handle} 失败`, true);
           }
         } else {
-          try {
-            await blockUserCoordinated(handle, csrf);
-            incrementPersistentBlockedCount(1);
-            blockedHandles.add(handle);
-            blockedHandles.add(normalizeHandle(handle));
-            matchedHandlesInView.delete(handle);
-            matchedHandlesInView.delete(normalizeHandle(handle));
-            matchedUsersCache.delete(handle);
-            matchedUsersCache.delete(normalizeHandle(handle));
-            dimArticlesByHandle(handle);
-            updateHideBadge();
-            updateReferralBadge();
-            showToast(`@${handle} 已拉黑`, false);
-            document.querySelectorAll(`button[data-xfs-handle="${CSS.escape(handle)}"]`).forEach(b => {
-              b.dataset.xfsState = 'blocked';
-              b.disabled         = false;
-              b.textContent      = IBTN_CHECK_SVG;
-              b.style.opacity    = '1';
-              updateInlineBlockButton(b);
-            });
-          } catch {
-            btn.disabled = false; btn.style.opacity = '1';
-            showToast(`拉黑 @${handle} 失败`, true);
-          }
+          const result = enqueueGlobalBlockUsers([{ handle, displayName, source: 'inline' }], 'inline');
+          document.querySelectorAll('button[data-xfs-handle]').forEach(b => {
+            if (normalizeHandle(b.dataset.xfsHandle) !== normalizeHandle(handle)) return;
+            b.disabled = false;
+            b.style.opacity = '1';
+            updateInlineBlockButton(b);
+          });
+          showToast(result.added ? `@${handle} 已加入拉黑排队` : `@${handle} 已在拉黑排队中`, false);
         }
       };
 
@@ -4501,6 +6263,8 @@
   // Dimensions derived from button positions: gear(200), referral scan(240), referral hide(280), sweep(320), scan(360), hide(400).
   function injectBtnBackdrop() {
     if (!document.body) return;
+    const experimentActive = experimentalBrowseBlockActive();
+    const warningTitle = experimentActive ? toolbarExperimentWarningTitle() : 'X Fraud Scanner 工具栏';
 
     if (!document.getElementById('xfs-btn-backdrop')) {
       const bd = document.createElement('div');
@@ -4510,13 +6274,23 @@
         'width:40px', 'height:240px',
         'background:rgba(255,255,255,0.82)',
         'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
-        `border:1.5px solid ${C.btnBorder}`,
+        `border:1.5px solid ${experimentActive ? C.blockRed : C.btnBorder}`,
         'border-radius:20px',
-        'box-shadow:0 2px 16px rgba(0,0,0,0.12)',
-        'pointer-events:none',
+        `box-shadow:${experimentActive ? `0 0 0 4px ${C.blockRed}12,0 3px 18px rgba(244,33,46,0.14)` : '0 2px 16px rgba(0,0,0,0.12)'}`,
+        'pointer-events:auto',
+        `cursor:${experimentActive ? 'help' : 'default'}`,
         'z-index:2147483644',
       ].join(';');
+      bd.title = warningTitle;
       document.body.appendChild(bd);
+    } else {
+      const bd = document.getElementById('xfs-btn-backdrop');
+      bd.title = warningTitle;
+      bd.style.border = `1.5px solid ${experimentActive ? C.blockRed : C.btnBorder}`;
+      bd.style.boxShadow = experimentActive
+        ? `0 0 0 4px ${C.blockRed}12,0 3px 18px rgba(244,33,46,0.14)`
+        : '0 2px 16px rgba(0,0,0,0.12)';
+      bd.style.cursor = experimentActive ? 'help' : 'default';
     }
 
     [
@@ -4650,25 +6424,40 @@
   function updateStackToggleBtn() {
     const btn = document.getElementById('xfs-stack-toggle-btn');
     if (!btn) return;
+    const experimentActive = experimentalBrowseBlockActive();
     const collapsed = buttonsCollapsed;
     btn.textContent = collapsed ? EXPAND_SVG : COLLAPSE_SVG;
-    btn.title = collapsed ? 'X Fraud Scanner · 已收起，点击展开右侧工具栏；拖动可移动' : 'X Fraud Scanner · 收起右侧工具栏；拖动可移动';
+    btn.title = collapsed
+      ? `X Fraud Scanner · 已收起，点击展开右侧工具栏；拖动可移动${experimentActive ? `\n${toolbarExperimentWarningTitle()}` : ''}`
+      : `X Fraud Scanner · 收起右侧工具栏；拖动可移动${experimentActive ? `\n${toolbarExperimentWarningTitle()}` : ''}`;
     btn.style.width = collapsed ? '46px' : '32px';
     btn.style.height = collapsed ? '30px' : '32px';
     btn.style.borderRadius = collapsed ? '15px' : '50%';
     btn.style.opacity = collapsed ? '0.92' : '0.58';
     btn.style.background = collapsed ? 'rgba(255,255,255,0.94)' : 'rgba(255,255,255,0.76)';
-    btn.style.border = collapsed ? `1.5px solid ${C.sub}` : `1.5px solid ${C.btnBorder}`;
-    btn.style.boxShadow = collapsed ? '0 3px 12px rgba(83,100,113,0.18)' : '0 1px 6px rgba(0,0,0,0.10)';
+    btn.style.border = experimentActive
+      ? `1.5px solid ${C.blockRed}`
+      : (collapsed ? `1.5px solid ${C.sub}` : `1.5px solid ${C.btnBorder}`);
+    btn.style.boxShadow = experimentActive
+      ? `0 0 0 3px ${C.blockRed}18, ${collapsed ? '0 3px 12px rgba(244,33,46,0.18)' : '0 1px 8px rgba(244,33,46,0.14)'}`
+      : (collapsed ? '0 3px 12px rgba(83,100,113,0.18)' : '0 1px 6px rgba(0,0,0,0.10)');
     btn.style.fontFamily = 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
     btn.style.fontSize = collapsed ? '11px' : '18px';
     btn.style.fontWeight = collapsed ? '800' : '700';
     btn.style.letterSpacing = '0';
-    btn.style.color = C.sub;
+    btn.style.color = experimentActive ? C.blockRed : C.sub;
   }
 
   function removeStackToggleBtn() {
     document.getElementById('xfs-stack-toggle-btn')?.remove();
+  }
+
+  function injectExperimentKillSwitch() {
+    removeExperimentKillSwitch();
+  }
+
+  function removeExperimentKillSwitch() {
+    document.getElementById('xfs-experiment-kill-btn')?.remove();
   }
 
   function removeBtnStack() {
@@ -4688,12 +6477,14 @@
     injectStackToggleBtn();
     if (buttonsCollapsed) {
       removeBtnStack();
+      injectExperimentKillSwitch();
       return;
     }
     injectHideBtn();
     injectBtnBackdrop();
     injectReferralBtn();
     injectGearBtn();
+    injectExperimentKillSwitch();
     if (!document.getElementById('xfs-referral-scan-btn')) {
       document.body.appendChild(mkIconBtn(
         'xfs-referral-scan-btn', SCAN_SVG, '扫描并自动拉黑当前视图导流号；只检查已加载回复，识别会稍有延迟', 240, C.referral, scanReferralAccountsInView));
@@ -4723,6 +6514,7 @@
   function removeBtn() {
     removeBtnStack();
     removeStackToggleBtn();
+    removeExperimentKillSwitch();
   }
 
   // ── Likes / retweets / followers page button ─────────────────────────
@@ -4963,6 +6755,7 @@
       setTimeout(captureReferralAccountsFromProfileDom, 300);
       setTimeout(ensureRouteButtons, 300);
       startButtonWatchdog(12000, 500);
+      injectExperimentKillSwitch();
     }
     _navCallbacks.push(handleNav);
 
@@ -4981,6 +6774,9 @@
     });
     observer.observe(document.body, { childList: true, subtree: true });
     // Initial inject on page load
+    startExperimentalBrowseBlockHeartbeat();
+    startGlobalBlockQueueMonitor();
+    injectExperimentKillSwitch();
     setTimeout(captureReferralAccountsFromProfileDom, 900);
     setTimeout(injectInlineButtons, 1200);
     setTimeout(ensureRouteButtons, 1200);
@@ -4993,6 +6789,7 @@
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
       ensureRouteButtons();
+      injectExperimentKillSwitch();
       startButtonWatchdog(5000, 500);
     });
   }
