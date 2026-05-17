@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      6.15
+// @version      6.16
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -34,6 +34,7 @@
   const DECOR_SYMBOL_RUN_SRC = `(?:${DECOR_SYMBOL_SRC})+`;
   const { content: DEFAULT_SUSPECT_KWS, name: DEFAULT_SUSPECT_NAME_KWS, regex: DEFAULT_SUSPECT_RE_KWS } = buildDefaultSuspectPresets();
   const DEFAULT_HIDE_ONLY_RE_KWS = [];
+  const DEFAULT_REFERRAL_PROFILE_KWS = [];
   const DEFAULT_REFERRAL_PROFILE_RE_KWS = [];
   const REMOTE_RULES_URL = 'https://raw.githubusercontent.com/stigfire/x_fraud_block/main/rules/keywords.json';
   const REMOTE_RULES_API_URL = 'https://api.github.com/repos/stigfire/x_fraud_block/contents/rules/keywords.json?ref=main';
@@ -45,6 +46,7 @@
     name: 300,
     regex: 80,
     hideOnlyRegex: 80,
+    referralProfile: 120,
     referralProfileRegex: 80,
     keywordLen: 120,
     regexLen: 500,
@@ -105,6 +107,7 @@
       nameKeywords: _limitRemoteList(_remoteArray(obj, 'nameKeywords'), REMOTE_RULE_LIMITS.name, REMOTE_RULE_LIMITS.keywordLen),
       regexKeywords: _limitRemoteList(_remoteArray(obj, 'regexKeywords'), REMOTE_RULE_LIMITS.regex, REMOTE_RULE_LIMITS.regexLen, true),
       hideOnlyRegexKeywords: _limitRemoteList(_remoteArray(obj, 'hideOnlyRegexKeywords'), REMOTE_RULE_LIMITS.hideOnlyRegex, REMOTE_RULE_LIMITS.regexLen, true),
+      referralProfileKeywords: _limitRemoteList(_remoteArray(obj, 'referralProfileKeywords'), REMOTE_RULE_LIMITS.referralProfile, REMOTE_RULE_LIMITS.keywordLen),
       referralProfileRegexKeywords: _limitRemoteList(_remoteArray(obj, 'referralProfileRegexKeywords'), REMOTE_RULE_LIMITS.referralProfileRegex, REMOTE_RULE_LIMITS.regexLen, true),
     };
     return {
@@ -118,7 +121,7 @@
   function loadRemoteRulesCache() {
     try {
       const cached = sanitizeRemoteRulesPayload(GM_getValue('remote_rules_cache', null));
-      const total = cached.rules.contentKeywords.length + cached.rules.nameKeywords.length + cached.rules.regexKeywords.length + cached.rules.hideOnlyRegexKeywords.length + cached.rules.referralProfileRegexKeywords.length;
+      const total = cached.rules.contentKeywords.length + cached.rules.nameKeywords.length + cached.rules.regexKeywords.length + cached.rules.hideOnlyRegexKeywords.length + cached.rules.referralProfileKeywords.length + cached.rules.referralProfileRegexKeywords.length;
       remoteRulesCache = total > 0 || cached.rulesVersion ? cached : null;
     } catch (_) {
       remoteRulesCache = null;
@@ -131,6 +134,7 @@
     if (key === 'suspect_name_kws') return remoteRulesCache.rules.nameKeywords || [];
     if (key === 'suspect_re_kws') return remoteRulesCache.rules.regexKeywords || [];
     if (key === 'hide_only_re_kws') return remoteRulesCache.rules.hideOnlyRegexKeywords || [];
+    if (key === 'referral_profile_kws') return remoteRulesCache.rules.referralProfileKeywords || [];
     if (key === 'referral_profile_re_kws') return remoteRulesCache.rules.referralProfileRegexKeywords || [];
     return [];
   }
@@ -165,12 +169,14 @@
   let SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
   let SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
   let HIDE_ONLY_RE_KWS = _loadKws(DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
+  let REFERRAL_PROFILE_KWS = _loadKws(DEFAULT_REFERRAL_PROFILE_KWS, 'referral_profile_kws');
   let REFERRAL_PROFILE_RE_KWS = _loadKws(DEFAULT_REFERRAL_PROFILE_RE_KWS, 'referral_profile_re_kws');
   function reloadKws() {
     SUSPECT_KWS      = _loadKws(DEFAULT_SUSPECT_KWS,      'suspect_kws');
     SUSPECT_NAME_KWS = _loadKws(DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     SUSPECT_RE_KWS   = _loadKws(DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
     HIDE_ONLY_RE_KWS = _loadKws(DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
+    REFERRAL_PROFILE_KWS = _loadKws(DEFAULT_REFERRAL_PROFILE_KWS, 'referral_profile_kws');
     REFERRAL_PROFILE_RE_KWS = _loadKws(DEFAULT_REFERRAL_PROFILE_RE_KWS, 'referral_profile_re_kws');
   }
   function saveKws() {
@@ -178,6 +184,7 @@
     _saveKwSet(SUSPECT_NAME_KWS, DEFAULT_SUSPECT_NAME_KWS, 'suspect_name_kws');
     _saveKwSet(SUSPECT_RE_KWS,   DEFAULT_SUSPECT_RE_KWS,   'suspect_re_kws');
     _saveKwSet(HIDE_ONLY_RE_KWS, DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
+    _saveKwSet(REFERRAL_PROFILE_KWS, DEFAULT_REFERRAL_PROFILE_KWS, 'referral_profile_kws');
     _saveKwSet(REFERRAL_PROFILE_RE_KWS, DEFAULT_REFERRAL_PROFILE_RE_KWS, 'referral_profile_re_kws');
   }
   let regexCacheKey = '';
@@ -305,15 +312,16 @@
     const n = remoteRulesCache.rules.nameKeywords.length;
     const r = remoteRulesCache.rules.regexKeywords.length;
     const hr = remoteRulesCache.rules.hideOnlyRegexKeywords.length;
+    const pk = remoteRulesCache.rules.referralProfileKeywords.length;
     const pr = remoteRulesCache.rules.referralProfileRegexKeywords.length;
     const ver = remoteRulesCache.rulesVersion ? ` · ${remoteRulesCache.rulesVersion}` : '';
-    return `内容 ${c} / 用户名 ${n} / 正则 ${r} / 只隐藏正则 ${hr} / 主页正则 ${pr}${ver}`;
+    return `内容 ${c} / 用户名 ${n} / 正则 ${r} / 只隐藏正则 ${hr} / 主页关键词 ${pk} / 主页正则 ${pr}${ver}`;
   }
 
   function remoteRulesTotal(cache) {
     const rules = cache?.rules;
     if (!rules) return 0;
-    return rules.contentKeywords.length + rules.nameKeywords.length + rules.regexKeywords.length + rules.hideOnlyRegexKeywords.length + rules.referralProfileRegexKeywords.length;
+    return rules.contentKeywords.length + rules.nameKeywords.length + rules.regexKeywords.length + rules.hideOnlyRegexKeywords.length + rules.referralProfileKeywords.length + rules.referralProfileRegexKeywords.length;
   }
 
   function diffRemoteRuleList(prevList, nextList) {
@@ -346,6 +354,7 @@
       ['nameKeywords'],
       ['regexKeywords'],
       ['hideOnlyRegexKeywords'],
+      ['referralProfileKeywords'],
       ['referralProfileRegexKeywords'],
     ].forEach(([key]) => {
       const diff = diffRemoteRuleList(prevCache.rules[key], nextCache.rules[key]);
@@ -1137,9 +1146,13 @@
     return getRegexHits(profileReferralRuleText(input), REFERRAL_PROFILE_RE_KWS, 'profile');
   }
 
+  function profileReferralKeywordHit(input) {
+    const text = profileReferralRuleText(input).toLowerCase();
+    return REFERRAL_PROFILE_KWS.find(kw => text.includes(String(kw || '').trim().toLowerCase())) || '';
+  }
+
   function profileHasReferralIntent(input) {
-    const text = profileReferralRuleText(input);
-    return text.includes('大号') || profileReferralRegexHits(input).length > 0;
+    return !!profileReferralKeywordHit(input) || profileReferralRegexHits(input).length > 0;
   }
 
   function rememberReferralIntentHint(handle, text) {
