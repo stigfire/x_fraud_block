@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      6.15
+// @version      6.17
 // @description  扫描推文回复中的垃圾用户批量拉黑
 // @author       summeriscoming
 // @license MIT
@@ -180,6 +180,70 @@
     _saveKwSet(HIDE_ONLY_RE_KWS, DEFAULT_HIDE_ONLY_RE_KWS, 'hide_only_re_kws');
     _saveKwSet(REFERRAL_PROFILE_RE_KWS, DEFAULT_REFERRAL_PROFILE_RE_KWS, 'referral_profile_re_kws');
   }
+  function kwSetConfig(type) {
+    if (type === 'content') return { key: 'suspect_kws', defaults: DEFAULT_SUSPECT_KWS, live: () => SUSPECT_KWS };
+    if (type === 'name') return { key: 'suspect_name_kws', defaults: DEFAULT_SUSPECT_NAME_KWS, live: () => SUSPECT_NAME_KWS };
+    if (type === 'regex') return { key: 'suspect_re_kws', defaults: DEFAULT_SUSPECT_RE_KWS, live: () => SUSPECT_RE_KWS };
+    if (type === 'hide_only_regex') return { key: 'hide_only_re_kws', defaults: DEFAULT_HIDE_ONLY_RE_KWS, live: () => HIDE_ONLY_RE_KWS };
+    if (type === 'referral_profile_regex') return { key: 'referral_profile_re_kws', defaults: DEFAULT_REFERRAL_PROFILE_RE_KWS, live: () => REFERRAL_PROFILE_RE_KWS };
+    return null;
+  }
+  function addManualKeyword(type, value) {
+    const cfg = kwSetConfig(type);
+    const cleanValue = String(value || '').trim();
+    if (!cfg || !cleanValue) return false;
+    const norm = _normKw(cleanValue);
+    if (cfg.live().some(item => _normKw(item) === norm)) return false;
+    const defaults = _combinedDefaults(cfg.defaults, cfg.key);
+    const addKey = cfg.key + '_add';
+    const delKey = cfg.key + '_del';
+    const adds = _cleanKwList(GM_getValue(addKey, []));
+    const nextAdds = defaults.some(item => _normKw(item) === norm) || adds.some(item => _normKw(item) === norm)
+      ? adds
+      : [...adds, cleanValue];
+    const nextDels = _cleanKwList(GM_getValue(delKey, [])).filter(item => _normKw(item) !== norm);
+    GM_setValue(addKey, nextAdds);
+    GM_setValue(delKey, nextDels);
+    reloadKws();
+    refreshKeywordPanelIfOpen();
+    refreshVisibleKeywordMatches();
+    return true;
+  }
+  function removeManualKeyword(type, value) {
+    const cfg = kwSetConfig(type);
+    const cleanValue = String(value || '').trim();
+    if (!cfg || !cleanValue) return false;
+    const norm = _normKw(cleanValue);
+    const defaults = _combinedDefaults(cfg.defaults, cfg.key);
+    const addKey = cfg.key + '_add';
+    const delKey = cfg.key + '_del';
+    const nextAdds = _cleanKwList(GM_getValue(addKey, [])).filter(item => _normKw(item) !== norm);
+    const curDels = _cleanKwList(GM_getValue(delKey, []));
+    const nextDels = defaults.some(item => _normKw(item) === norm)
+      ? (curDels.some(item => _normKw(item) === norm) ? curDels : [...curDels, cleanValue])
+      : curDels.filter(item => _normKw(item) !== norm);
+    GM_setValue(addKey, nextAdds);
+    GM_setValue(delKey, nextDels);
+    reloadKws();
+    refreshKeywordPanelIfOpen();
+    refreshVisibleKeywordMatches();
+    return true;
+  }
+  function refreshVisibleKeywordMatches() {
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => btn.remove());
+      delete art.dataset.xfsIbtn;
+    });
+    reapplyContentRulesForVisible();
+    injectInlineButtons();
+    applyHideAll();
+  }
+  function commitKeywordChanges() {
+    saveKws();
+    reloadKws();
+    refreshKeywordPanelIfOpen();
+    refreshVisibleKeywordMatches();
+  }
   let regexCacheKey = '';
   let regexCache = [];
   function compiledRegexes(patterns) {
@@ -291,12 +355,8 @@
       HIDE_ONLY_RE_KWS = _mergeKws(HIDE_ONLY_RE_KWS, parsed.hideOnlyRegex);
       REFERRAL_PROFILE_RE_KWS = _mergeKws(REFERRAL_PROFILE_RE_KWS, parsed.referralProfileRegex);
     }
-    saveKws();
+    commitKeywordChanges();
     showToast(`已导入 ${total} 个自定义关键词`);
-    if (document.getElementById('xfs-panel')) {
-      const kwBar = document.getElementById('xfs-kw-bar');
-      showPanel(scanPage(), { keywordsOpen: !kwBar || kwBar.style.display !== 'none' });
-    }
   }
 
   function remoteRulesSummary() {
@@ -537,6 +597,7 @@
   let hideMatchedActive = GM_getValue('hide_matched', true); // toggle: hide matched users' replies
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let autoReferralDetectActive = GM_getValue('auto_referral_detect', true); // low-rate background referral lookup for visible replies
+  let hideOnlyRulesActive = GM_getValue('hide_only_rules_active', true); // toggle: allow hide-only regex rules to affect hiding without enqueueing blocks
   let skipVerifiedAccountsActive = GM_getValue('skip_verified_accounts', true); // global safety: verified accounts are skipped by automatic hide/block flows
   let youngAccountFilterActive = GM_getValue('young_account_filter_active', false); // optional profile-created-at filter; default off due to lookup cost and false positives
   let youngAccountCutoffMode = normalizeYoungAccountCutoffMode(GM_getValue('young_account_cutoff_mode', 'days'));
@@ -797,32 +858,6 @@
     };
   }
 
-  // ── Mute selected word: copy to clipboard + open settings page ───────
-  // X.com's internal muted-keywords API (/i/api/1.1/mutes/keywords/create.json)
-  // returns 404 — endpoint removed. Reliable fallback: clipboard + navigation.
-  // NOTE: selection is saved in _savedMuteSel on mousedown (before click clears it)
-  let _savedMuteSel = '';
-
-  async function muteSelectedWord() {
-    const sel = _savedMuteSel || (window.getSelection() || document.getSelection())?.toString().trim() || '';
-    _savedMuteSel = '';
-
-    if (!sel) { showToast('请先在页面上选中一个词', true); return; }
-    if (sel.length > 50) { showToast('选中文字太长（限 50 字符内）', true); return; }
-
-    if (!window.confirm(`将 "${sel}" 加入静音关键词？\n\n点确认后将打开设置页，词已复制到剪贴板，直接粘贴添加即可。`)) return;
-
-    try { await navigator.clipboard.writeText(sel); } catch (_) {}
-
-    window.open('https://x.com/settings/muted_keywords', '_blank');
-
-    const t = document.createElement('div');
-    t.style.cssText = `position:fixed;bottom:148px;right:16px;background:${C.mute};color:#fff;padding:7px 13px;border-radius:12px;font-size:12px;font-weight:600;z-index:2147483647;box-shadow:0 2px 8px rgba(0,0,0,0.2);line-height:1.5;pointer-events:none;`;
-    t.textContent = `"${sel}" 已复制 · 在设置页粘贴添加`;
-    document.body.appendChild(t);
-    setTimeout(() => { t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 420); }, 3500);
-  }
-
   function esc(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -867,6 +902,11 @@
     for (const sp of nameEl.querySelectorAll('span')) {
       const t = sp.textContent.trim();
       if (t.startsWith('@') && t.length > 1 && !t.includes(' ')) return t.slice(1);
+    }
+    for (const a of nameEl.querySelectorAll('a[href]')) {
+      const href = a.getAttribute('href') || '';
+      const m = href.match(/^\/([A-Za-z0-9_]{1,15})(?:$|[/?#])/);
+      if (m && m[1].toLowerCase() !== 'i' && m[1].toLowerCase() !== 'search') return m[1];
     }
     return null;
   }
@@ -1780,7 +1820,8 @@
     const nameReHits = getRegexHits(displayName, SUSPECT_RE_KWS, 'name').map(h => ({ ...h, type: 'regex', snippet: `昵称: ${h.snippet}` }));
     const bodyReHits = getRegexHits(fullText, SUSPECT_RE_KWS, 'body').map(h => ({ ...h, type: 'regex' }));
     const reHits     = [...nameReHits, ...bodyReHits];
-    const hideOnlyReHits = getRegexHits(fullText, HIDE_ONLY_RE_KWS, 'body').map(h => ({ ...h, type: 'hide_only_regex' }));
+    const allHideOnlyReHits = getRegexHits(fullText, HIDE_ONLY_RE_KWS, 'body').map(h => ({ ...h, type: 'hide_only_regex' }));
+    const hideOnlyReHits = hideOnlyRulesActive ? allHideOnlyReHits : [];
     const cats = new Set();
     const actionableCats = new Set();
     if (heartHits.length  > 0) cats.add('heart');
@@ -1803,6 +1844,7 @@
       kwHits,
       reHits,
       hideOnlyReHits,
+      allHideOnlyReHits,
     };
   }
 
@@ -1977,12 +2019,14 @@
     content: '内容关键词',
     regex: '正则',
     hide_only_regex: '只隐藏正则',
+    referral_profile_regex: '导流号主页正则',
   };
   const RULE_ID_PREFIX = {
     content: 'keyword',
     name: 'name',
     regex: 'regex',
     hide_only_regex: 'hide-re',
+    referral_profile_regex: 'profile-re',
   };
 
   function ruleId(type, idx) {
@@ -1994,6 +2038,7 @@
     if (type === 'name') return SUSPECT_NAME_KWS;
     if (type === 'regex') return SUSPECT_RE_KWS;
     if (type === 'hide_only_regex') return HIDE_ONLY_RE_KWS;
+    if (type === 'referral_profile_regex') return REFERRAL_PROFILE_RE_KWS;
     return [];
   }
 
@@ -2085,8 +2130,10 @@
     }
     art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => {
       btn.dataset.xfsMatched = '0';
+      btn.dataset.xfsHideOnlyMatched = '0';
       btn.dataset.xfsReferralAccount = '0';
       delete btn.dataset.xfsMatchTooltip;
+      delete btn.dataset.xfsHideOnlyTooltip;
       delete btn.dataset.xfsReferralTooltip;
       updateInlineBlockButton(btn);
     });
@@ -2129,8 +2176,8 @@
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     const userMap = new Map();
 
-    articles.forEach((art, idx) => {
-      if (idx === 0) return; // skip original tweet
+    articles.forEach(art => {
+      if (isMainTweetArticle(art)) return;
 
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
@@ -2139,30 +2186,11 @@
         return;
       }
 
-      let handle = null;
-      for (const sp of nameEl.querySelectorAll('span')) {
-        const t = sp.textContent.trim();
-        if (t.startsWith('@') && t.length > 1 && !t.includes(' ')) { handle = t.slice(1); break; }
-      }
+      const handle = extractHandleFromArticle(art);
       if (!handle) return;
       if (blockedHandles.has(normalizeHandle(handle))) return;
 
-      // Extract display name robustly: read all text+emoji from the entire
-      // User-Name element, then cut off at '@handle' and whatever follows.
-      // This is layout-agnostic — no assumption about which <a> is first.
-      let displayName = handle;
-      const rawNameText = getTextWithEmoji(nameEl);
-      const atIdx = rawNameText.indexOf('@' + handle);
-      if (atIdx > 0) {
-        displayName = rawNameText.slice(0, atIdx).trim() || handle;
-      } else {
-        // Fallback: first <a> that doesn't start with '@'
-        const nameLink = [...nameEl.querySelectorAll('a')].find(a => {
-          const t = getTextWithEmoji(a).trim();
-          return t && !t.startsWith('@');
-        });
-        if (nameLink) displayName = getTextWithEmoji(nameLink).trim() || handle;
-      }
+      const displayName = extractDisplayNameFromArticle(art, handle) || handle;
 
       const textEl = art.querySelector('[data-testid="tweetText"]');
       const tweetText = textEl ? getTextWithEmoji(textEl) : '';
@@ -2513,6 +2541,7 @@
     injectBtn();
     reapplyContentRulesForVisible();
     injectInlineButtons();
+    flushMatchedUsersCacheToBrowseQueue();
     showToast(`边刷边拉黑已开启：慢速排队 ${experimentSlowBlockGapText()}，会员保护已强制开启`, false);
   }
 
@@ -2543,6 +2572,19 @@
       sourceArticle?.setAttribute?.('data-xfs-auto-queued', '1');
       showToast(`边刷边拉黑：@${key} 已加入拉黑排队`, false);
     }
+  }
+
+  function flushMatchedUsersCacheToBrowseQueue() {
+    if (!experimentalBrowseBlockActive() || !matchedUsersCache.size) return;
+    const users = Array.from(matchedUsersCache.values())
+      .map(user => {
+        const key = normalizeHandle(user?.handle);
+        return key ? { ...user, handle: key, source: 'browse_auto' } : null;
+      })
+      .filter(user => user && !blockedHandles.has(user.handle) && !globalBlockQueueItemForHandle(user.handle) && !isProtectedVerifiedHandle(user.handle));
+    if (!users.length) return;
+    const result = enqueueGlobalBlockUsers(users, 'browse_auto');
+    if (result.added) showToast(`边刷边拉黑：已补入队 ${result.added} 个已扫到账号`, false);
   }
 
   function readGlobalBlockQueue() {
@@ -2612,10 +2654,10 @@
     refreshGlobalBlockQueueDetailPanel();
   }
 
-  function globalQueueUsersForPanel() {
+  function globalQueueUsersForPanel(q = readGlobalBlockQueue()) {
     const rank = { running: 0, queued: 1, failed: 2, skipped: 3, done: 4 };
     const showDone = globalQueueShowDone();
-    return globalBlockQueueItems()
+    return globalBlockQueueItems(q)
       .filter(item => showDone || !['done', 'skipped'].includes(item.status || 'queued'))
       .sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || Number(a.addedAt || 0) - Number(b.addedAt || 0))
       .map(item => {
@@ -2646,7 +2688,7 @@
       });
   }
 
-  function showGlobalBlockQueueDetailPanel(forceOpen = true) {
+  function showGlobalBlockQueueDetailPanel(forceOpen = true, q = null) {
     if (!forceOpen && globalBlockQueueMinimized()) {
       const panel = document.getElementById('xfs-panel');
       if (panel?.dataset.xfsGlobalQueueView === '1') panel.remove();
@@ -2656,17 +2698,17 @@
     globalQueuePanelSuppressed = false;
     GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, false);
     document.getElementById('xfs-global-block-queue')?.remove();
-    showPanel(globalQueueUsersForPanel(), { globalQueueView: true, precheck: false });
+    showPanel(globalQueueUsersForPanel(q || readGlobalBlockQueue()), { globalQueueView: true, precheck: false });
   }
 
-  function refreshGlobalBlockQueueDetailPanel() {
+  function refreshGlobalBlockQueueDetailPanel(q = null) {
     const panel = document.getElementById('xfs-panel');
     if (globalBlockQueueMinimized()) {
       if (panel?.dataset.xfsGlobalQueueView === '1') panel.remove();
       updateGlobalBlockQueuePanel();
       return;
     }
-    if (panel?.dataset.xfsGlobalQueueView === '1') showGlobalBlockQueueDetailPanel(false);
+    if (panel?.dataset.xfsGlobalQueueView === '1') showGlobalBlockQueueDetailPanel(false, q);
   }
 
   function recoverStaleGlobalBlockQueueItems(q = readGlobalBlockQueue()) {
@@ -2828,7 +2870,23 @@
     });
     writeGlobalBlockQueue(q);
     updateGlobalBlockQueuePanel();
-    refreshGlobalBlockQueueDetailPanel();
+    refreshGlobalBlockQueueDetailPanel(q);
+  }
+
+  function clearDoneGlobalBlockQueue() {
+    const q = readGlobalBlockQueue();
+    let removed = 0;
+    Object.keys(q.items).forEach(key => {
+      if (q.items[key]?.status === 'done') {
+        delete q.items[key];
+        removed += 1;
+      }
+    });
+    if (!removed) return 0;
+    writeGlobalBlockQueue(q);
+    updateGlobalBlockQueuePanel();
+    refreshGlobalBlockQueueDetailPanel(q);
+    return removed;
   }
 
   function clearGlobalBlockQueue() {
@@ -3123,6 +3181,7 @@
     regexKw:   '#0d7a8a',
     referral:  '#5f6f89',
     referralHot: '#f59e0b',
+    hideOnlyHot: '#f2c14e',
   };
 
   const CAT_META = {
@@ -3527,7 +3586,7 @@
         const del = document.createElement('button');
         del.textContent = '×';
         del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.sub};padding:0;line-height:1;`;
-        del.onclick = () => { SUSPECT_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+        del.onclick = () => { removeManualKeyword('content', kw); };
         chip.appendChild(del);
         textRow.appendChild(chip);
       });
@@ -3536,7 +3595,7 @@
       inp.style.cssText = `border:1px solid ${C.btnBorder};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
       const addKw = () => {
         const v = inp.value.trim();
-        if (v && !SUSPECT_KWS.includes(v)) { SUSPECT_KWS.push(v); saveKws(); refreshKwPanel(); }
+        if (v && addManualKeyword('content', v)) inp.value = '';
         else inp.value = '';
       };
       inp.onkeydown = e => { if (e.key === 'Enter') addKw(); };
@@ -3561,7 +3620,7 @@
         const del = document.createElement('button');
         del.textContent = '×';
         del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.nameKw};padding:0;line-height:1;`;
-        del.onclick = () => { SUSPECT_NAME_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+        del.onclick = () => { removeManualKeyword('name', kw); };
         chip.appendChild(del);
         nameRow.appendChild(chip);
       });
@@ -3570,7 +3629,7 @@
       nInp.style.cssText = `border:1px solid ${C.nameKw};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
       const addNKw = () => {
         const v = nInp.value.trim();
-        if (v && !SUSPECT_NAME_KWS.includes(v)) { SUSPECT_NAME_KWS.push(v); saveKws(); refreshKwPanel(); }
+        if (v && addManualKeyword('name', v)) nInp.value = '';
         else nInp.value = '';
       };
       nInp.onkeydown = e => { if (e.key === 'Enter') addNKw(); };
@@ -3618,7 +3677,7 @@
           const del = document.createElement('button');
           del.textContent = '×';
           del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.regexKw};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { SUSPECT_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+          del.onclick = () => { removeManualKeyword('regex', pat); };
           chip.appendChild(lbl);
           chip.appendChild(del);
           reRow.appendChild(chip);
@@ -3633,7 +3692,7 @@
           const parsed = _regexPatternParts(v);
           try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
           reInp.style.borderColor = C.regexKw;
-          if (!SUSPECT_RE_KWS.includes(v)) { SUSPECT_RE_KWS.push(v); saveKws(); refreshKwPanel(); }
+          if (addManualKeyword('regex', v)) reInp.value = '';
           else reInp.value = '';
         };
         reInp.onkeydown = e => { if (e.key === 'Enter') addRe(); };
@@ -3654,9 +3713,21 @@
 
         const hideOnlySection = document.createElement('div');
         hideOnlySection.style.cssText = `display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px dashed ${C.mute};margin-top:2px;`;
+        const hideOnlyHeader = document.createElement('div');
+        hideOnlyHeader.style.cssText = rowCss;
+        const hideOnlyLbl = document.createElement('span');
+        hideOnlyLbl.textContent = `只隐藏正则 (${HIDE_ONLY_RE_KWS.length})`;
+        hideOnlyLbl.style.cssText = `font-size:10px;color:${C.mute};font-weight:700;flex-shrink:0;`;
+        const hideOnlyTip = document.createElement('span');
+        hideOnlyTip.textContent = '?';
+        hideOnlyTip.title = '这是专门给“超级有效、但误伤也偏高”的规则准备的。命中后只隐藏，不会仅因这条规则进入自动拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。';
+        hideOnlyTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.mute};border-radius:50%;font-size:10px;font-weight:700;color:${C.mute};cursor:help;`;
+        hideOnlyHeader.appendChild(hideOnlyLbl);
+        hideOnlyHeader.appendChild(hideOnlyTip);
+        hideOnlySection.appendChild(hideOnlyHeader);
 
         const hideOnlyNote = document.createElement('div');
-        hideOnlyNote.textContent = '只隐藏正则：命中后只折叠回复，不会仅因这条规则进入拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。适合误伤偏高但噪音很多的模式。';
+        hideOnlyNote.textContent = '这一类规则特别适合“超级有效、能大幅降噪，但误伤也明显偏高”的模式。命中后只折叠回复，不会仅因这条规则进入自动拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。拿不准、又怕误伤时，优先先放这里，别直接放进自动拉黑规则。';
         hideOnlyNote.style.cssText = `font-size:10px;line-height:1.4;color:${C.sub};padding:6px 8px;border:1px solid ${C.mute};border-radius:8px;background:#effaf7;`;
         hideOnlySection.appendChild(hideOnlyNote);
 
@@ -3672,14 +3743,14 @@
           const del = document.createElement('button');
           del.textContent = '×';
           del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.mute};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { HIDE_ONLY_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+          del.onclick = () => { removeManualKeyword('hide_only_regex', pat); };
           chip.appendChild(lbl);
           chip.appendChild(del);
           hideOnlyRow.appendChild(chip);
         });
         const hideOnlyInp = document.createElement('input');
         hideOnlyInp.placeholder = '+ 只隐藏正则';
-        hideOnlyInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；默认按 content: 内容范围处理';
+        hideOnlyInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；默认按 content: 内容范围处理。适合高效果但高误伤、只想先隐藏降噪的规则。';
         hideOnlyInp.style.cssText = `border:1px solid ${C.mute};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
         const addHideOnlyRe = () => {
           const v = hideOnlyInp.value.trim();
@@ -3689,7 +3760,7 @@
           try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { hideOnlyInp.style.borderColor = C.blockRed; return; }
           hideOnlyInp.style.borderColor = C.mute;
           const normalized = `content:${parsed.pat}`;
-          if (!HIDE_ONLY_RE_KWS.includes(normalized)) { HIDE_ONLY_RE_KWS.push(normalized); saveKws(); refreshKwPanel(); }
+          if (addManualKeyword('hide_only_regex', normalized)) hideOnlyInp.value = '';
           else hideOnlyInp.value = '';
         };
         hideOnlyInp.onkeydown = e => { if (e.key === 'Enter') addHideOnlyRe(); };
@@ -3733,6 +3804,7 @@
         referralProfileRow.style.cssText = rowCss;
         REFERRAL_PROFILE_RE_KWS.forEach((pat, i) => {
           const chip = document.createElement('span');
+          chip.title = ruleTitle('referral_profile_regex', i, pat);
           chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.referral};border-radius:10px;font-size:10px;color:${C.referral};max-width:360px;`;
           const lbl = document.createElement('span');
           lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
@@ -3740,7 +3812,7 @@
           const del = document.createElement('button');
           del.textContent = '×';
           del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.referral};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { REFERRAL_PROFILE_RE_KWS.splice(i, 1); saveKws(); refreshKwPanel(); };
+          del.onclick = () => { removeManualKeyword('referral_profile_regex', pat); };
           chip.appendChild(lbl);
           chip.appendChild(del);
           referralProfileRow.appendChild(chip);
@@ -3757,7 +3829,7 @@
           try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { referralProfileInp.style.borderColor = C.blockRed; return; }
           referralProfileInp.style.borderColor = C.referral;
           const normalized = `profile:${parsed.pat}`;
-          if (!REFERRAL_PROFILE_RE_KWS.includes(normalized)) { REFERRAL_PROFILE_RE_KWS.push(normalized); saveKws(); refreshKwPanel(); }
+          if (addManualKeyword('referral_profile_regex', normalized)) referralProfileInp.value = '';
           else referralProfileInp.value = '';
         };
         referralProfileInp.onkeydown = e => { if (e.key === 'Enter') addReferralProfileRe(); };
@@ -4132,7 +4204,6 @@
       const clearDoneBtn = mkBtn('清完成', false);
       clearDoneBtn.onclick = () => {
         clearCompletedGlobalBlockQueue();
-        showGlobalBlockQueueDetailPanel();
       };
       const clearQueueBtn = mkBtn('清队列', false);
       clearQueueBtn.title = '清除当前队列中的全部非执行中条目';
@@ -4573,7 +4644,6 @@
   const BLOCK_SCAN_SVG = '🚫'; // targeted content block current page
   const SWEEP_SVG     = '⚡';  // sweep all replies
   const DONE_SVG      = '✓';  // cleanup complete, click to reload
-  const MUTE_SVG      = '🔇';  // mute selected word
   const EYE_SVG       = '👁';  // hide toggle; active state is shown by color/border
   const GEAR_SVG      = '⚙';  // low-frequency tools: keyword import/export
   const COLLAPSE_SVG  = '-';  // collapse the right-side tool stack
@@ -4619,9 +4689,8 @@
 
   function reapplyContentRulesForVisible() {
     if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
-    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
-      if (art === firstArt) return;
+      if (isMainTweetArticle(art)) return;
       if (isProtectedVerifiedArticle(art)) {
         clearProtectedVerifiedArticleState(art);
         return;
@@ -4638,15 +4707,18 @@
       ].map(a => a.textContent).join(' ');
       const fullText = [textEl ? getTextWithEmoji(textEl) : null, cardEl ? getTextWithEmoji(cardEl) : null, bodyLinkText].filter(Boolean).join(' ');
       const tweetSnippet = buildUserPreviewSnippet(textEl ? getTextWithEmoji(textEl) : '', cardEl ? getTextWithEmoji(cardEl) : '', bodyLinkText);
-      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchesFilters(displayName, fullText);
+      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits, allHideOnlyReHits } = matchesFilters(displayName, fullText);
       setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(key);
       art.dataset.xfsHideMatched = (matched && !alreadyBlocked) ? '1' : '0';
       const btn = art.querySelector(`button[data-xfs-handle]`);
       if (btn) {
         btn.dataset.xfsMatched = (matched && !alreadyBlocked) ? '1' : '0';
+        btn.dataset.xfsHideOnlyMatched = (!actionableMatched && allHideOnlyReHits.length > 0 && !alreadyBlocked) ? '1' : '0';
         if (matched && !alreadyBlocked) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits });
         else delete btn.dataset.xfsMatchTooltip;
+        if (allHideOnlyReHits.length > 0 && !alreadyBlocked) btn.dataset.xfsHideOnlyTooltip = '命中只隐藏不拉黑规则';
+        else delete btn.dataset.xfsHideOnlyTooltip;
         updateInlineBlockButton(btn);
       }
       if (actionableMatched && !alreadyBlocked) {
@@ -4680,6 +4752,7 @@
   function buttonMatchedReason(btn) {
     if (btn.dataset.xfsMatched === '1') return 'matched';
     if (btn.dataset.xfsReferralAccount === '1') return 'referral';
+    if (btn.dataset.xfsHideOnlyMatched === '1') return 'hide_only';
     return '';
   }
 
@@ -4691,7 +4764,7 @@
     const isFailed = queueStatus === 'failed';
     const reason = buttonMatchedReason(btn);
     const isHot = reason !== '';
-    const color = reason === 'referral' ? C.referralHot : C.blockRed;
+    const color = reason === 'referral' ? C.referralHot : (reason === 'hide_only' ? C.hideOnlyHot : C.blockRed);
     const stateColor = isBlocked ? C.mute : (isHot ? color : (isQueued ? C.nameKw : (isFailed ? C.blockRed : C.btnBorder)));
     btn.dataset.xfsQueueStatus = queueStatus;
     btn.textContent = isBlocked ? IBTN_CHECK_SVG : (isQueued ? '…' : (isFailed ? '!' : IBTN_BLOCK_SVG));
@@ -4702,9 +4775,9 @@
       : (!isBlocked && isFailed ? `0 0 0 2px ${C.blockRed}40` : '');
     btn.style.background = isBlocked ? `${C.mute}18` : (isHot ? `${color}22` : (isQueued ? `${C.nameKw}16` : 'transparent'));
     btn.style.opacity = isHot && !isBlocked ? '1' : btn.style.opacity || '1';
-    const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : '');
+    const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : (reason === 'hide_only' ? '[只隐藏规则] ' : ''));
     const handle = btn.dataset.xfsHandle || '';
-    const details = [btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
+    const details = [btn.dataset.xfsHideOnlyTooltip, btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
     const actionTitle = isBlocked
       ? `已拉黑 · 点击取消 @${handle}`
       : (isQueued ? `已在拉黑排队中 · 点击查看详情 @${handle}` : (isFailed ? `排队执行失败 · 点击重新加入 @${handle}` : `拉黑 @${handle}`));
@@ -5126,16 +5199,6 @@
     title.style.cssText = `flex:1;min-width:0;font-weight:900;font-size:11px;line-height:1.1;color:${experimentActive ? C.blockRed : C.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
     const topActions = document.createElement('div');
     topActions.style.cssText = 'display:flex;align-items:center;gap:4px;flex:0 0 auto;';
-    const settingsBtn = document.createElement('button');
-    settingsBtn.type = 'button';
-    settingsBtn.textContent = '设置';
-    settingsBtn.title = '打开边刷边拉黑设置';
-    settingsBtn.style.cssText = `border:1px solid ${experimentActive ? C.blockRed : C.btnBorder};border-radius:7px;background:${experimentActive ? '#fff1f1' : '#fff'};color:${experimentActive ? C.blockRed : C.sub};font-size:10px;font-weight:800;padding:2px 5px;cursor:pointer;line-height:1.2;`;
-    settingsBtn.onclick = () => {
-      closeToolsPanel();
-      showExperimentalBrowseBlockPanel();
-    };
-    topActions.appendChild(settingsBtn);
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
     dismissBtn.textContent = 'x';
@@ -5165,6 +5228,7 @@
     const state = document.createElement('span');
     state.textContent = paused ? '暂停' : (cooling ? '冷却中' : (counts.running ? '执行中' : (counts.queued ? '等待' : '空闲')));
     state.style.cssText = `color:${paused || cooling ? C.blockRed : (counts.running ? C.nameKw : C.sub)};font-size:10px;font-weight:800;`;
+    const actionBtnCss = `border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.sub};font-size:10px;font-weight:800;padding:3px 5px;cursor:pointer;width:100%;`;
     const resumeBtn = document.createElement('button');
     resumeBtn.type = 'button';
     resumeBtn.textContent = paused ? '继续' : '暂停';
@@ -5181,16 +5245,42 @@
     minBtn.type = 'button';
     minBtn.textContent = '展开';
     minBtn.title = minimized ? '展开拉黑排队' : '最小化拉黑排队';
-    minBtn.style.cssText = `border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.sub};font-size:10px;padding:3px 5px;cursor:pointer;width:100%;`;
+    minBtn.style.cssText = actionBtnCss;
     minBtn.onclick = () => setGlobalBlockQueueMinimized(!minimized);
+    const settingsBtn = document.createElement('button');
+    settingsBtn.type = 'button';
+    settingsBtn.textContent = '设置';
+    settingsBtn.title = '打开边刷边拉黑设置';
+    settingsBtn.style.cssText = actionBtnCss;
+    settingsBtn.onclick = () => {
+      closeToolsPanel();
+      showExperimentalBrowseBlockPanel();
+    };
+    const clearDoneBtn = document.createElement('button');
+    clearDoneBtn.type = 'button';
+    clearDoneBtn.textContent = '清已完成';
+    clearDoneBtn.title = done ? '把已完成数字归零，只清已完成项目' : '当前没有已完成项目';
+    clearDoneBtn.style.cssText = actionBtnCss;
+    clearDoneBtn.style.opacity = done ? '1' : '0.55';
+    clearDoneBtn.style.cursor = done ? 'pointer' : 'default';
+    clearDoneBtn.onclick = () => {
+      if (!done) return;
+      const removed = clearDoneGlobalBlockQueue();
+      if (removed) showToast(`已清除 ${removed} 个已完成项目`, false);
+    };
+    const actionGrid = document.createElement('div');
+    actionGrid.style.cssText = 'display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:4px;';
+    actionGrid.appendChild(resumeBtn);
+    actionGrid.appendChild(minBtn);
+    actionGrid.appendChild(settingsBtn);
+    actionGrid.appendChild(clearDoneBtn);
     hdr.appendChild(topRow);
     hdr.appendChild(stats);
     hdr.appendChild(doneLine);
     hdr.appendChild(roundLine);
     hdr.appendChild(timingLine);
     hdr.appendChild(state);
-    hdr.appendChild(resumeBtn);
-    hdr.appendChild(minBtn);
+    hdr.appendChild(actionGrid);
     makeGlobalBlockQueuePanelDraggable(p, hdr);
     p.appendChild(hdr);
     avoidGlobalQueuePanelOverlap(p);
@@ -5243,6 +5333,9 @@
 
   function toolbarExperimentWarningTitle() {
     return '边刷边拉黑模式开启, 可以在设置中关闭';
+  }
+  function homeToolbarTipText() {
+    return '主页精简工具栏：这里只提供设置入口。本工具主要针对回复区，不过滤 Twitter/X 主页主贴。';
   }
 
   function mkIconBtn(id, svg, title, bottom, color, onclick) {
@@ -5390,8 +5483,11 @@
         showToast(`${label}已存在`, false);
         return;
       }
-      list.push(keyword);
-      saveKws();
+      if (!addManualKeyword(type, keyword)) {
+        setRuleTestStatus(statusEl, `${label}已存在：${keyword}`, C.sub);
+        showToast(`${label}已存在`, false);
+        return;
+      }
       setRuleTestStatus(statusEl, `已加入${label}：${keyword}`, C.regexKw);
       showToast(`已加入${label}`, false);
     }
@@ -5425,8 +5521,11 @@
         showToast('正则规则已存在', false);
         return;
       }
-      SUSPECT_RE_KWS.push(normalized);
-      saveKws();
+      if (!addManualKeyword('regex', normalized)) {
+        setRuleTestStatus(statusEl, `正则已存在：${normalized}`, C.sub);
+        showToast('正则规则已存在', false);
+        return;
+      }
       setRuleTestStatus(statusEl, `已加入正则：${normalized}`, C.regexKw);
       showToast('已加入正则规则', false);
     }
@@ -5458,8 +5557,11 @@
         showToast('只隐藏正则已存在', false);
         return;
       }
-      HIDE_ONLY_RE_KWS.push(normalized);
-      saveKws();
+      if (!addManualKeyword('hide_only_regex', normalized)) {
+        setRuleTestStatus(statusEl, `只隐藏正则已存在：${normalized}`, C.sub);
+        showToast('只隐藏正则已存在', false);
+        return;
+      }
       setRuleTestStatus(statusEl, `已加入只隐藏正则：${normalized}`, C.mute);
       showToast('已加入只隐藏正则', false);
     }
@@ -5615,7 +5717,7 @@
       addScopedRegexFromField(contentField.input.value, 'content', contentStatus);
     };
     const addHideOnlyReBtn = mkMiniBtn('+ 只隐藏正则', C.mute);
-    addHideOnlyReBtn.title = '把当前输入加入只隐藏不拉黑的内容正则；适合高误伤规则';
+    addHideOnlyReBtn.title = '把当前输入加入只隐藏不拉黑的内容正则；适合超级有效但高误伤、只想先隐藏降噪的规则';
     addHideOnlyReBtn.onclick = e => {
       e?.preventDefault?.();
       e?.stopPropagation?.();
@@ -5628,7 +5730,7 @@
     contentField.quickRow.appendChild(contentAddGroup);
 
     const caution = document.createElement('div');
-    caution.textContent = '建议先拿当前页面多条回复详细测试，确认命中稳定且误命中为 0，再加入关键词或正则。高误伤但又值得先折叠页面噪音的规则，请加到“只隐藏正则”，不要直接进自动拉黑流。';
+    caution.textContent = '建议先拿当前页面多条回复详细测试，确认命中稳定，再决定放哪一类。那种超级有效、能明显降噪、但误伤也偏高的规则，请优先加到“只隐藏正则”，让它只隐藏不拉黑；不要一上来就塞进自动拉黑流，不然很容易把人搞晕、也容易误伤正常用户。';
     caution.style.cssText = `font-size:10px;line-height:1.45;color:${C.blockRed};background:${C.blockRed}10;border:1px solid ${C.blockRed}33;border-radius:8px;padding:7px 8px;`;
 
     const actions = document.createElement('div');
@@ -5661,7 +5763,7 @@
       '两类账号说明',
       '',
       '内容垃圾号：根据回复正文、用户名关键词、正则规则判断。适合处理重复话术、色情/诈骗引流回复。',
-      '只隐藏正则：也是按回复正文匹配，但命中后只隐藏，不会仅因这条规则进入自动拉黑候选。适合误伤偏高、但页面噪音很重的模式。',
+      '只隐藏正则：也是按回复正文匹配，但命中后只隐藏，不会仅因这条规则进入自动拉黑候选。它特别适合那些超级有效、能明显压下页面噪音、但误伤也偏高的模式。拿不准的规则先放这里，不要直接进自动拉黑。',
       '',
       '导流号：根据账号主页里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角拉黑按钮会变橙色。',
@@ -5867,6 +5969,14 @@
       verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。';
     }
 
+    function refreshHideOnlyRulesControls() {
+      hideOnlyRulesBtn.textContent = `只隐藏不拉黑关键字：${hideOnlyRulesActive ? '开' : '关'}`;
+      hideOnlyRulesBtn.style.borderColor = hideOnlyRulesActive ? C.mute : C.btnBorder;
+      hideOnlyRulesBtn.style.color = hideOnlyRulesActive ? C.mute : C.sub;
+      hideOnlyRulesBtn.style.background = hideOnlyRulesActive ? '#effaf7' : '#fff';
+      hideOnlyRulesBtn.title = '默认开启。这个类别专门留给“超级有效、但误伤偏高”的规则做隐藏降噪。关闭后，“只隐藏正则”会暂时失效；普通关键词和普通正则不受影响。';
+    }
+
     const autoReferralBtn = mkToolBtn('', () => {
       autoReferralDetectActive = !autoReferralDetectActive;
       GM_setValue('auto_referral_detect', autoReferralDetectActive);
@@ -5901,6 +6011,17 @@
     });
     refreshVerifiedProtectionControls();
 
+    const hideOnlyRulesBtn = mkToolBtn('', () => {
+      hideOnlyRulesActive = !hideOnlyRulesActive;
+      GM_setValue('hide_only_rules_active', hideOnlyRulesActive);
+      refreshHideOnlyRulesControls();
+      reapplyContentRulesForVisible();
+      applyHideAll();
+      refreshKeywordPanelIfOpen();
+      showToast(hideOnlyRulesActive ? '只隐藏不拉黑关键字已开启' : '只隐藏不拉黑关键字已关闭', false);
+    });
+    refreshHideOnlyRulesControls();
+
     function refreshRemoteRulesControls() {
       remoteRulesBtn.textContent = `远程规则订阅：${remoteRulesActive ? '开' : '关'}`;
       remoteRulesBtn.style.borderColor = remoteRulesActive ? C.nameKw : C.btnBorder;
@@ -5922,7 +6043,7 @@
     remoteTitle.textContent = '远程规则订阅';
     remoteTitle.style.cssText = `font-size:11px;font-weight:800;color:${C.nameKw};`;
     const remoteNote = document.createElement('div');
-    remoteNote.textContent = '默认关闭。开启后同步内容、用户名、正则和只隐藏正则四类远程规则；失败时沿用本地缓存。垃圾号经常变化形式，建议打开远程规则定义。';
+    remoteNote.textContent = '默认关闭。开启后同步内容、用户名、正则、只隐藏正则和导流号主页正则五类远程规则；失败时沿用本地缓存。其中“只隐藏正则”适合那些超级有效但高误伤、应先用于隐藏降噪的规则。';
     remoteNote.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};`;
     const remoteStatus = document.createElement('div');
     remoteStatus.style.cssText = `font-size:10px;line-height:1.35;color:${C.sub};word-break:break-word;`;
@@ -6085,7 +6206,7 @@
     editBtn.style.borderColor = C.regexKw;
     editBtn.style.color = C.regexKw;
     editBtn.style.background = '#f2fbfc';
-    editBtn.title = '打开内容关键词、用户名关键词、正则和只隐藏正则编辑面板';
+    editBtn.title = '打开内容关键词、用户名关键词、正则和只隐藏正则编辑面板；其中只隐藏正则适合高效果但高误伤的降噪规则';
     const statsBtn = mkToolBtn('关键词命中统计', showHideRuleStatsPanel);
     statsBtn.style.borderColor = C.suspect;
     statsBtn.style.color = C.suspect;
@@ -6096,7 +6217,7 @@
     });
     ruleTestBtn.style.borderColor = C.regexKw;
     ruleTestBtn.style.color = C.regexKw;
-    ruleTestBtn.title = '打开正则规则测试面板；可测试后直接加入用户名关键词、内容关键词或 scoped 正则';
+    ruleTestBtn.title = '打开正则规则测试面板；可测试后直接加入用户名关键词、内容关键词、scoped 正则或只隐藏正则';
     remoteWrap.style.gridRow = 'span 4';
     youngWrap.style.gridRow = 'span 4';
     p.appendChild(editBtn);
@@ -6104,6 +6225,7 @@
     p.appendChild(ruleTestBtn);
     grid.appendChild(autoReferralBtn);
     grid.appendChild(verifiedProtectBtn);
+    grid.appendChild(hideOnlyRulesBtn);
     grid.appendChild(remoteWrap);
     grid.appendChild(youngWrap);
     grid.appendChild(mkToolBtn('两类账号说明', showCategoryHelp));
@@ -6152,6 +6274,34 @@
     document.getElementById('xfs-gear-btn')?.remove();
     closeToolsPanel();
   }
+  function injectHomeToolbar() {
+    if (!document.body) return;
+    if (location.pathname !== '/home') return;
+    injectGearBtn();
+    const gearBtn = document.getElementById('xfs-gear-btn');
+    if (gearBtn) {
+      gearBtn.title = `设置 / 关键词定义\n${homeToolbarTipText()}`;
+      gearBtn.style.width = '38px';
+      gearBtn.style.height = '38px';
+      gearBtn.style.right = toolbarRightPx(-3);
+      gearBtn.style.bottom = toolbarBottomPx(197);
+      gearBtn.style.border = '1px solid rgba(83,100,113,0.12)';
+      gearBtn.style.background = 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,251,0.94))';
+      gearBtn.style.color = C.text;
+      gearBtn.style.boxShadow = '0 10px 24px rgba(15,20,25,0.12), inset 0 1px 0 rgba(255,255,255,0.78)';
+      gearBtn.style.fontSize = '16px';
+      gearBtn.onmouseenter = () => {
+        if (gearBtn.disabled) return;
+        gearBtn.style.transform = 'translateY(-1px) scale(1.04)';
+        gearBtn.style.boxShadow = '0 14px 28px rgba(15,20,25,0.18), inset 0 1px 0 rgba(255,255,255,0.82)';
+      };
+      gearBtn.onmouseleave = () => {
+        gearBtn.style.transform = '';
+        gearBtn.style.boxShadow = '0 10px 24px rgba(15,20,25,0.12), inset 0 1px 0 rgba(255,255,255,0.78)';
+      };
+    }
+    updateToolbarPositions();
+  }
 
   // ── Inline block button icons ────────────────────────────────────────
   const IBTN_BLOCK_SVG = '⊘';  // circled slash — block
@@ -6161,7 +6311,6 @@
   // Injects a small block icon next to every tweet's username.
   // Highlighted (red) = matches current filter rules. Dim (gray) = no match but still clickable.
   function injectInlineButtons() {
-    const firstArt = document.querySelectorAll('article[data-testid="tweet"]')[0] || null;
     document.querySelectorAll('article[data-testid="tweet"]:not([data-xfs-ibtn])').forEach(art => {
       art.dataset.xfsIbtn = '1';
       if (isMainTweetArticle(art)) {
@@ -6173,17 +6322,10 @@
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
 
-      let handle = null;
-      for (const sp of nameEl.querySelectorAll('span')) {
-        const t = sp.textContent.trim();
-        if (t.startsWith('@') && t.length > 1 && !t.includes(' ')) { handle = t.slice(1); break; }
-      }
+      const handle = extractHandleFromArticle(art);
       if (!handle) return;
 
-      let displayName = handle;
-      const rawNameText = getTextWithEmoji(nameEl);
-      const atIdx = rawNameText.indexOf('@' + handle);
-      if (atIdx > 0) displayName = rawNameText.slice(0, atIdx).trim() || handle;
+      const displayName = extractDisplayNameFromArticle(art, handle) || handle;
 
       const textEl = art.querySelector('[data-testid="tweetText"]');
       const cardEl = art.querySelector('[data-testid="card.wrapper"]');
@@ -6198,12 +6340,12 @@
       const allowFilterHighlight = location.pathname !== '/home';
       const matchInfo = allowFilterHighlight && !isProtectedVerified
         ? matchesFilters(displayName, fullText)
-        : { matched: false, actionableMatched: false, cats: new Set(), actionableCats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [], hideOnlyReHits: [] };
-      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchInfo;
+        : { matched: false, actionableMatched: false, cats: new Set(), actionableCats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [], hideOnlyReHits: [], allHideOnlyReHits: [] };
+      const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits, allHideOnlyReHits } = matchInfo;
       if (isProtectedVerified) clearProtectedVerifiedArticleState(art);
       else setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
-      const isOP = art === firstArt;
+      const isOP = isMainTweetArticle(art);
       art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
       if (alreadyBlocked) art.dataset.xfsReferralAccount = '0';
       else if (!isProtectedVerified) scheduleReferralCheck(art, handle, isOP, displayName);
@@ -6242,7 +6384,9 @@
       btn.dataset.xfsHandle  = handle;
       btn.dataset.xfsState   = alreadyBlocked ? 'blocked' : 'unblocked';
       btn.dataset.xfsMatched = matched ? '1' : '0';
-      if (matched) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits });
+      btn.dataset.xfsHideOnlyMatched = (!actionableMatched && allHideOnlyReHits.length > 0 && !alreadyBlocked) ? '1' : '0';
+      if (matched) btn.dataset.xfsMatchTooltip = hitTooltipFromMatchInfo({ heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits });
+      if (allHideOnlyReHits.length > 0 && !alreadyBlocked) btn.dataset.xfsHideOnlyTooltip = '命中只隐藏不拉黑规则';
       const referral = isProtectedVerified ? null : referralReason(handle);
       btn.dataset.xfsReferralAccount = referral ? '1' : '0';
       if (referral?.urls?.length) btn.dataset.xfsReferralUrl = referral.urls[0];
@@ -6283,7 +6427,7 @@
         if (btn.disabled) return;
         const isBlocked = btn.dataset.xfsState === 'blocked';
         const reason = buttonMatchedReason(btn);
-        const color = reason === 'referral' ? C.referralHot : C.blockRed;
+        const color = reason === 'referral' ? C.referralHot : (reason === 'hide_only' ? C.hideOnlyHot : C.blockRed);
         btn.style.background = isBlocked ? `${C.suspect}20` : (reason ? `${color}18` : `${C.sub}12`);
         btn.style.transform  = 'scale(1.18)';
       };
@@ -6759,36 +6903,12 @@
     document.getElementById('xfs-hide-btn')?.remove();
   }
 
-  // ── Home timeline button: mute keyword ───────────────────────────────
-  // Muted keywords only affect Home timeline / Notifications / Search.
-  // They do NOT filter tweet reply threads — that's what the block buttons are for.
-  function injectMuteBtn() {
-    if (!document.body) return;
-    if (document.getElementById('xfs-mute-btn')) return;
-    if (location.pathname !== '/home') return;
-    const muteEl = mkIconBtn(
-      'xfs-mute-btn',
-      MUTE_SVG,
-      '静音选中词（加入首页/通知/搜索的静音词，不影响回复串）',
-      152, C.mute, muteSelectedWord
-    );
-    muteEl.addEventListener('mousedown', e => {
-      _savedMuteSel = (window.getSelection() || document.getSelection())?.toString().trim() || '';
-      e.preventDefault();
-    });
-    document.body.appendChild(muteEl);
-  }
-
-  function removeMuteBtn() {
-    document.getElementById('xfs-mute-btn')?.remove();
-  }
-
   function ensureRouteButtons() {
     if (!document.body) return;
     const p = location.pathname;
     if      (isListPage(p))          injectListBtn();
     else if (/\/status\/\d/.test(p)) injectBtn();
-    else if (p === '/home')          injectMuteBtn();
+    else if (p === '/home')          injectHomeToolbar();
   }
 
   function routeButtonsReady() {
@@ -6797,7 +6917,7 @@
               : /\/status\/\d/.test(p) ? (buttonsCollapsed
                 ? ['xfs-stack-toggle-btn']
                 : ['xfs-stack-toggle-btn', 'xfs-btn-backdrop', 'xfs-hide-btn', 'xfs-referral-btn', 'xfs-btn', 'xfs-referral-scan-btn', 'xfs-sweep-btn', 'xfs-gear-btn'])
-              : p === '/home' ? ['xfs-mute-btn'] : [];
+              : p === '/home' ? ['xfs-gear-btn'] : [];
     return ids.every(id => document.getElementById(id));
   }
 
@@ -6851,7 +6971,6 @@
       referralHintRefreshDone.clear();
       removeBtn();
       removeListBtn();
-      removeMuteBtn();
       document.getElementById('xfs-panel')?.remove();
       setTimeout(captureReferralAccountsFromProfileDom, 300);
       setTimeout(ensureRouteButtons, 300);
