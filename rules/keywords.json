@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-18.1",
+  "rulesVersion": "2026-05-18.2",
   "updatedAt": "2026-05-18T00:00:00Z",
   "contentKeywords": [
     "万达广场",
@@ -30,6 +30,7 @@
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:[\\u2460-\\u24FF\\u2776-\\u2793\\u3016-\\u301B\\u3021-\\u3029\\u3038-\\u303A\\u3200-\\u33FF\\u{1F100}-\\u{1F1FF}]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,})(?=[\\s\\S]*[A-Za-z](?:[\\u2460-\\u24FF\\u2776-\\u2793\\u3016-\\u301B\\u3021-\\u3029\\u3038-\\u303A\\u3200-\\u33FF\\u{1F100}-\\u{1F1FF}]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])+[A-Za-z])[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+",
     "content:附近的(?:gg|dd|哥哥|弟弟)",
+    "content:有[\\s\\S]{0,8}哥哥",
     "content:(?<![\\s\\S])(?=[\\s\\S]{8,120}(?![\\s\\S]))(?:[\\s\\S]{0,2}(?:\\p{Extended_Pictographic}|\\p{S}|[\\u27C0-\\u2BFF]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,}[\\s\\S]{0,2}",
     "content:^(?=.{1,9}$)(?!.*\\p{Script=Han})(?=.*[\\p{Extended_Pictographic}])(?=.*[!-~])(?:[\\p{Extended_Pictographic}\\uFE0F\\u200D]|[!-~])+$"
   ],
