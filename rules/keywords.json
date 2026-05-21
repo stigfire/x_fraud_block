@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "rulesVersion": "2026-05-21.1",
-  "updatedAt": "2026-05-21T00:00:00Z",
+  "rulesVersion": "2026-05-18.4",
+  "updatedAt": "2026-05-18T00:00:00Z",
   "contentKeywords": [
     "万达广场",
     "有弟弟",
@@ -28,7 +28,7 @@
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,100}(?![\\s\\S]))(?=[\\s\\S]*想找个)[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s]){3,})[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,25}(?![\\s\\S]))(?=.*\\p{Script=Han})(?=(?:[\\s\\S]*[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s]){3,})(?=[\\s\\S]*([^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])[\\s\\S]*(?!\\1)[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])[\\s\\S]+",
-    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}|[\\u0F00-\\u0FFF\\u2460-\\u24FF\\u2776-\\u2793\\u2E00-\\u2E7F\\u3016-\\u301B\\u3021-\\u3029\\u3038-\\u303A\\u3200-\\u33FF\\uA640-\\uA69F\\u{1F100}-\\u{1F1FF}]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,})[\\s\\S]+",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=(?:[\\s\\S]*(?:[\\u2460-\\u24FF\\u2776-\\u2793\\u3016-\\u301B\\u3021-\\u3029\\u3038-\\u303A\\u3200-\\u33FF\\u{1F100}-\\u{1F1FF}]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,})(?=[\\s\\S]*[A-Za-z](?:[\\u2460-\\u24FF\\u2776-\\u2793\\u3016-\\u301B\\u3021-\\u3029\\u3038-\\u303A\\u3200-\\u33FF\\u{1F100}-\\u{1F1FF}]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])+[A-Za-z])[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,80}(?![\\s\\S]))(?=[\\s\\S]*(?:哥哥|弟弟))(?=(?:[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation})){2,})[\\s\\S]+",
     "content:附近的(?:gg|dd|哥哥|弟弟)",
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,50}(?![\\s\\S]))(?=[\\s\\S]*有[\\s\\S]{0,12}哥哥)[\\s\\S]+",
