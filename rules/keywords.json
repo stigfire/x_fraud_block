@@ -35,7 +35,8 @@
     "content:(?<![\\s\\S])(?=[\\s\\S]{1,50}(?![\\s\\S]))(?=[\\s\\S]*有[\\s\\S]{0,12}哥哥)[\\s\\S]+",
     "content:(?<![\\s\\S])(?=[\\s\\S]{8,120}(?![\\s\\S]))(?:[\\s\\S]{0,2}(?:\\p{Extended_Pictographic}|\\p{S}|[\\u27C0-\\u2BFF]|[^\\p{Script=Han}\\p{Script=Latin}\\p{Number}\\p{Punctuation}\\p{Separator}\\s])){3,}[\\s\\S]{0,2}",
     "content:^(?=.{1,9}$)(?!.*\\p{Script=Han})(?=.*[\\p{Extended_Pictographic}])(?=.*[!-~])(?:[\\p{Extended_Pictographic}\\uFE0F\\u200D]|[!-~]|\\s)+$",
-    "content:(?:顶不住\\s{1,5}@[a-zA-Z0-9]+)"
+    "content:(?:顶不住\\s{1,5}@[a-zA-Z0-9]+)",
+    "content:(?<![\\s\\S])(?=[\\s\\S]{1,50}(?![\\s\\S]))(?=[\\s\\S]*[\\u4e00-\\u9fa5])(?=[\\s\\S]*\\s{1,5}@[a-zA-Z0-9]+)[\\s\\S]+"
   ],
   "referralProfileRegexKeywords": [
     "profile:(?=[\\s\\S]*(?:\\p{Extended_Pictographic}|\\p{Emoji_Presentation}))(?=[\\s\\S]*(?:https?:\\/\\/|t\\.co\\/|(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?:\\/[A-Za-z0-9._~:/?#[\\]@!$&'()*+,;=%-]*)?))[\\s\\S]{1,280}"
