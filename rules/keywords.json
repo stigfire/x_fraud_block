@@ -47,6 +47,6 @@
   ],
   "hideOnlyRegexKeywords": [
     "content:^[!-~]$",
-    "content:[\\s\\S]*@[a-zA-Z0-9_]+[\\s\\S]*"
+    "content:[\\s\\S]*@[\\s\\S]*"
   ]
 }
