@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         垃圾推号大扫除
 // @namespace    http://tampermonkey.net/
-// @version      6.17
-// @description  扫描推文回复中的垃圾用户批量拉黑
+// @version      6.52
+// @description  垃圾推文自动隐藏；垃圾号排队拉黑；远程规则自动更新；自定义关键词管理。
 // @author       summeriscoming
 // @license MIT
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzEiIGZpbGw9IiNmNDIxMmUiLz48Y2lyY2xlIGN4PSIyNyIgY3k9IjI3IiByPSIxMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIvPjxsaW5lIHgxPSIzNSIgeTE9IjM1IiB4Mj0iNDgiIHkyPSI0OCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjQuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjIxIiB5MT0iMjciIHgyPSIzMyIgeTI9IjI3IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMy41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48bGluZSB4MT0iMjciIHkxPSIyMSIgeDI9IjI3IiB5Mj0iMzMiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==
@@ -230,6 +230,7 @@
     return true;
   }
   function refreshVisibleKeywordMatches() {
+    bumpHideRulesGeneration();
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => btn.remove());
       delete art.dataset.xfsIbtn;
@@ -435,12 +436,11 @@
   }
 
   function refreshKeywordPanelIfOpen() {
-    const panel = document.getElementById('xfs-panel');
-    const kwBar = document.getElementById('xfs-kw-bar');
-    if (!panel || !kwBar) return;
-    if (panel.dataset.xfsGlobalQueueView === '1') return;
-    if (panelDockedActive || panel.style.display === 'none' || document.getElementById('xfs-panel-dock')) return;
-    showPanel(scanPage(), { keywordsOpen: kwBar.style.display !== 'none' });
+    const panel = document.getElementById(KEYWORD_PANEL_ID);
+    if (!panel) return;
+    const body = panel.querySelector('[data-xfs-keyword-body="1"]');
+    const scrollTop = body ? body.scrollTop : 0;
+    showKeywordPanel({ scrollTop });
   }
 
   function decodeBase64Utf8(base64) {
@@ -509,6 +509,7 @@
       GM_setValue('remote_rules_last_error', '');
       GM_setValue('remote_rules_last_change', remoteRulesLastChange);
       reloadKws();
+      bumpHideRulesGeneration();
       refreshKeywordPanelIfOpen();
       reapplyContentRulesForVisible();
       if (!silent) showToast(`远程规则已更新：${remoteRulesLastChange}；当前 ${remoteRulesSummary()}`, false);
@@ -534,12 +535,14 @@
   const MAX_BLOCK  = 100;
   const BLOCK_DELAY  = 3000; // base inter-block gap (ms)
   const BLOCK_JITTER = 2000; // random extra added to base, making effective range 3-5s
-  const EXPERIMENT_BLOCK_DELAY = 15000;
+  const EXPERIMENT_BLOCK_DELAY = 5000;
   const EXPERIMENT_BLOCK_JITTER = 5000;
   const EXPERIMENT_BROWSE_BLOCK_KEY = 'experimental_browse_block_v1';
   const EXPERIMENT_BROWSE_BLOCK_TIMING_KEY = 'experimental_browse_block_timing_v1';
-  const EXPERIMENT_BROWSE_BLOCK_HEARTBEAT_STALE = 5 * 60 * 1000;
-  const EXPERIMENT_BROWSE_BLOCK_MAX_AGE = 24 * 60 * 60 * 1000;
+  const EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION_KEY = 'experimental_browse_block_timing_defaults_version_v1';
+  const EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION = '2026-06-09.1';
+  const EXPERIMENT_BROWSE_BLOCK_TOUR_SEEN_KEY = 'xfs_experiment_browse_block_tour_seen_v1';
+  const EXPERIMENT_BROWSE_BLOCK_TOUR_MIN_MS = 5000;
   const GLOBAL_BLOCK_QUEUE_KEY = 'global_block_queue_v1';
   const GLOBAL_BLOCK_QUEUE_LOCK_KEY = 'global_block_queue_worker_lock_v1';
   const GLOBAL_BLOCK_QUEUE_PAUSED_KEY = 'global_block_queue_paused_v1';
@@ -549,16 +552,29 @@
   const GLOBAL_BLOCK_QUEUE_SHOW_DONE_KEY = 'global_block_queue_show_done_v1';
   const GLOBAL_BLOCK_QUEUE_ROUND_KEY = 'global_block_queue_round_v1';
   const GLOBAL_BLOCK_QUEUE_LOCK_TTL = 15000;
-  const GLOBAL_BLOCK_QUEUE_DONE_MAX = 300;
+  const GLOBAL_BLOCK_QUEUE_DONE_MAX = 1000;
   const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY = 20;
   const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN = 30000;
   const GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_JITTER = 15000;
   const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY = 60;
-  const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN = 5 * 60 * 1000;
+  const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN = 2 * 60 * 1000;
   const GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_JITTER = 60 * 1000;
+  const GLOBAL_BLOCK_QUEUE_MAX_ATTEMPTS = 3;
+  const GLOBAL_BLOCK_QUEUE_RETRY_BASE = 30000;
+  const GLOBAL_BLOCK_QUEUE_RETRY_MAX = 2 * 60 * 1000;
   const GLOBAL_BLOCK_QUEUE_PANEL_W = 136;
+  const GLOBAL_BLOCK_QUEUE_STRIP_W = 118;
+  const HIDE_SCROLL_IDLE_MS = 220;
+  const HIDE_FAST_SCROLL_PX = 900;
+  const HIDE_FAST_SCROLL_WINDOW_MS = 140;
+  const HIDE_PREWARM_AHEAD_PX = 1400;
+  const HIDE_PREWARM_BATCH_SIZE = 8;
+  const HIDE_ARTICLE_REPAIR_BATCH_SIZE = 10;
+  const HIDE_STATS_FLUSH_MS = 1200;
   const RESULT_PANEL_POS_KEY = 'xfs_result_panel_position_v1';
   const RESULT_PANEL_DOCK_POS_KEY = 'xfs_result_panel_dock_position_v1';
+  const GLOBAL_BLOCK_QUEUE_STRIP_COLLAPSED_KEY = 'global_block_queue_strip_collapsed_v1';
+  const KEYWORD_PANEL_ID = 'xfs-keyword-panel';
   // Low-follower hiding is intentionally disabled for now. It produced more
   // false positives than profile-link based referral detection, but the old
   // threshold constant is kept here as a note for possible future scoring.
@@ -577,10 +593,13 @@
     shortCooldownMs: GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN,
     longCooldownMs: GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN,
   });
+  const EXPERIMENT_MIN_BLOCK_DELAY = 5000;
+  const EXPERIMENT_MIN_SHORT_COOLDOWN = 30000;
+  const EXPERIMENT_MIN_LONG_COOLDOWN = 60 * 1000;
   const EXPERIMENT_TIMING_LIMITS = Object.freeze({
-    slowBlockDelayMs: { min: EXPERIMENT_BLOCK_DELAY, max: 10 * 60 * 1000 },
-    shortCooldownMs: { min: GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN, max: 30 * 60 * 1000 },
-    longCooldownMs: { min: GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN, max: 2 * 60 * 60 * 1000 },
+    slowBlockDelayMs: { min: EXPERIMENT_MIN_BLOCK_DELAY, max: 10 * 60 * 1000 },
+    shortCooldownMs: { min: EXPERIMENT_MIN_SHORT_COOLDOWN, max: 30 * 60 * 1000 },
+    longCooldownMs: { min: EXPERIMENT_MIN_LONG_COOLDOWN, max: 2 * 60 * 60 * 1000 },
   });
   const YOUNG_ACCOUNT_DAY_OPTIONS = [7, 14, 30, 60, 90];
   const REFERRAL_X_LINK_RE = /\b(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/(?!home\b|i\b|intent\b|share\b|search\b|settings\b|privacy\b|tos\b|explore\b|notifications\b|messages\b|compose\b)[A-Za-z0-9_]{1,15}\b/i;
@@ -598,7 +617,9 @@
   let hideReferralActive = GM_getValue('hide_referral_accounts', true); // toggle: hide replies from profile-link referral accounts
   let autoReferralDetectActive = GM_getValue('auto_referral_detect', true); // low-rate background referral lookup for visible replies
   let hideOnlyRulesActive = GM_getValue('hide_only_rules_active', true); // toggle: allow hide-only regex rules to affect hiding without enqueueing blocks
+  let keywordPanelRegexRulesOpen = false;
   let skipVerifiedAccountsActive = GM_getValue('skip_verified_accounts', true); // global safety: verified accounts are skipped by automatic hide/block flows
+  let hideVerifiedMatchedActive = GM_getValue('hide_verified_matched', false); // optional: hide verified replies that match content rules, but still do not auto-block them
   let youngAccountFilterActive = GM_getValue('young_account_filter_active', false); // optional profile-created-at filter; default off due to lookup cost and false positives
   let youngAccountCutoffMode = normalizeYoungAccountCutoffMode(GM_getValue('young_account_cutoff_mode', 'days'));
   let youngAccountMaxAgeDays = normalizeYoungAccountDays(GM_getValue('young_account_max_age_days', 30));
@@ -617,6 +638,28 @@
   let globalQueuePanelDragging = false;
   let globalQueuePanelSuppressed = false;
   let experimentalBrowseBlockHeartbeatTimer = null;
+  let sweepQuietModeActive = false;
+  let hideLayoutTimer = null;
+  let hideLayoutRaf = 0;
+  let hideArticleRepairRaf = 0;
+  const hideArticleRepairQueue = new Set();
+  let hidePrewarmTimer = null;
+  let hidePrewarmIdleHandle = 0;
+  let hidePrewarmIdleIsTimeout = false;
+  let hideSyncDirty = true;
+  let hideRuleStatsPending = null;
+  let hideRuleStatsFlushTimer = null;
+  let hideRulesGeneration = 1;
+  let visibleReplyCountPath = '';
+  let visibleReplySeen = new Map();
+  let visibleReplyCountTimer = null;
+  let visibleReplyCountWatchdogTimer = null;
+  let visibleReplyCountObserver = null;
+  let visibleReplyCountObservedButton = null;
+  let hideScrollActiveUntil = 0;
+  let hideFastScrollUntil = 0;
+  let hideLastScrollY = 0;
+  let hideLastScrollAt = 0;
   const matchedHandlesInView = new Set(); // accumulates matched handles this scroll session; reset on nav
   const matchedUsersCache = new Map();   // handle → full user object; survives DOM unload by React virtual list
   const referralIntentHints = new Map(); // handle -> visible profile/display-name text containing referral intent
@@ -655,6 +698,17 @@
     return next;
   }
 
+  function defaultExperimentTimingConfig() {
+    return normalizeExperimentTimingConfig(EXPERIMENT_TIMING_DEFAULTS);
+  }
+
+  function migrateExperimentTimingDefaultsOnce() {
+    if (GM_getValue(EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION_KEY, '') === EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION) return;
+    GM_setValue(EXPERIMENT_BROWSE_BLOCK_TIMING_KEY, defaultExperimentTimingConfig());
+    GM_setValue(EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION_KEY, EXPERIMENT_BROWSE_BLOCK_TIMING_DEFAULTS_VERSION);
+  }
+
+  migrateExperimentTimingDefaultsOnce();
   let experimentTimingConfig = normalizeExperimentTimingConfig(GM_getValue(EXPERIMENT_BROWSE_BLOCK_TIMING_KEY, null));
 
   function saveExperimentTimingConfig(next) {
@@ -666,7 +720,16 @@
     return experimentTimingConfig;
   }
 
+  function sameExperimentTimingConfig(a, b) {
+    return !!a && !!b
+      && a.slowBlockDelayMs === b.slowBlockDelayMs
+      && a.shortCooldownMs === b.shortCooldownMs
+      && a.longCooldownMs === b.longCooldownMs;
+  }
+
   function effectiveExperimentTimingConfig() {
+    const stored = normalizeExperimentTimingConfig(GM_getValue(EXPERIMENT_BROWSE_BLOCK_TIMING_KEY, experimentTimingConfig));
+    if (!sameExperimentTimingConfig(stored, experimentTimingConfig)) experimentTimingConfig = stored;
     return experimentTimingConfig;
   }
 
@@ -935,6 +998,10 @@
 
   function isProtectedVerifiedArticle(art) {
     return !!(skipVerifiedAccountsActive && articleHasVerifiedBadge(art));
+  }
+
+  function canHideProtectedVerifiedMatch(art) {
+    return !!(hideVerifiedMatchedActive && isProtectedVerifiedArticle(art));
   }
 
   function isProtectedVerifiedHandle(handle) {
@@ -1237,6 +1304,18 @@
 
   function isReservedPathHandle(handle) {
     return /^(?:home|i|intent|share|search|settings|privacy|tos|explore|notifications|messages|compose)$/i.test(handle || '');
+  }
+
+  function currentProfileTimelineOwnerHandle(path = location.pathname) {
+    const m = String(path || '').match(/^\/([A-Za-z0-9_]{1,15})(?:\/(?:with_replies|media|highlights|likes|about)?)?$/);
+    const handle = m?.[1] || '';
+    return handle && !isReservedPathHandle(handle) ? normalizeHandle(handle) : '';
+  }
+
+  function isCurrentProfileTimelineOwnerHandle(handle) {
+    const owner = currentProfileTimelineOwnerHandle();
+    const key = normalizeHandle(handle);
+    return !!owner && !!key && owner === key;
   }
 
   function captureReferralAccountsFromData(data) {
@@ -1726,11 +1805,157 @@
     return out;
   }
 
+  function debugRuleArticleText(art, index) {
+    const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+    const displayName = extractDisplayNameFromArticle(art, handle) || handle || '';
+    const textEl = art.querySelector('[data-testid="tweetText"]');
+    const cardEl = art.querySelector('[data-testid="card.wrapper"]');
+    const bodyLinkText = [
+      ...(textEl ? [...textEl.querySelectorAll('a[href]')] : []),
+      ...(cardEl ? [...cardEl.querySelectorAll('a[href]')] : []),
+    ].map(a => a.textContent).join(' ');
+    const tweetText = textEl ? getTextWithEmoji(textEl) : '';
+    const cardText = cardEl ? getTextWithEmoji(cardEl) : '';
+    const fullText = stripInvisible([tweetText, cardText, bodyLinkText].filter(Boolean).join(' '));
+    return {
+      index,
+      handle,
+      displayName: stripInvisible(displayName),
+      isMainTweet: isMainTweetArticle(art),
+      isProtectedVerified: isProtectedVerifiedArticle(art),
+      hasInlineButton: !!art.querySelector('button[data-xfs-handle]'),
+      dataset: {
+        xfsIbtn: art.dataset.xfsIbtn || '',
+        xfsHideMatched: art.dataset.xfsHideMatched || '',
+        xfsReferralAccount: art.dataset.xfsReferralAccount || '',
+      },
+      tweetText: stripInvisible(tweetText),
+      bodyLinkText: stripInvisible(bodyLinkText),
+      fullText,
+    };
+  }
+
+  function debugRuleExactMatches(list, variants) {
+    const norms = new Set(variants.map(_normKw));
+    return _cleanKwList(list).filter(item => norms.has(_normKw(item)));
+  }
+
+  function debugRuleVariants(raw, parsed) {
+    if (!parsed?.pat) return _cleanKwList([raw]);
+    return _cleanKwList([
+      raw,
+      parsed.pat,
+      `content:${parsed.pat}`,
+      `body:${parsed.pat}`,
+      `name:${parsed.pat}`,
+    ]);
+  }
+
+  function debugRuleTestTarget(parsed, re, article) {
+    if (!re || !parsed) return false;
+    if (parsed.scope === 'name') return re.test(article.displayName);
+    if (parsed.scope === 'profile') return false;
+    if (parsed.scope === 'body') return re.test(article.fullText);
+    return re.test(article.displayName) || re.test(article.fullText);
+  }
+
+  function debugRuleSnapshot(raw = '', opts = {}) {
+    const rawValue = String(raw || '').trim();
+    const parsed = rawValue ? _regexPatternParts(rawValue) : null;
+    let testRe = null;
+    let compileError = '';
+    if (parsed?.pat) {
+      try { testRe = new RegExp(parsed.pat, 'mu'); }
+      catch (e) { compileError = e?.message || String(e); }
+    }
+    const variants = debugRuleVariants(rawValue, parsed);
+    const remoteRegexRules = remoteRulesCache?.rules?.regexKeywords || [];
+    const delRegexRules = GM_getValue('suspect_re_kws_del', []) || [];
+    const contains = Array.isArray(opts.contains)
+      ? opts.contains.map(String).filter(Boolean)
+      : (opts.contains ? [String(opts.contains)] : []);
+    const limit = Math.max(1, Math.min(200, Number(opts.limit || 40) || 40));
+    const articles = [...document.querySelectorAll('article[data-testid="tweet"]')]
+      .map((art, index) => {
+        const article = debugRuleArticleText(art, index);
+        const liveMatch = matchesFilters(article.displayName, article.fullText);
+        const customHit = debugRuleTestTarget(parsed, testRe, article);
+        const containsHit = contains.length > 0 && contains.some(v => article.fullText.includes(v) || article.displayName.includes(v));
+        return {
+          ...article,
+          customHit,
+          liveMatched: liveMatch.matched,
+          liveActionableMatched: liveMatch.actionableMatched,
+          liveCats: [...liveMatch.cats],
+          liveActionableCats: [...liveMatch.actionableCats],
+          liveReHits: normalizeQueueRegexHits(liveMatch.reHits),
+          liveHideOnlyReHits: normalizeQueueRegexHits(liveMatch.hideOnlyReHits),
+          containsHit,
+        };
+      })
+      .filter(item => opts.all || item.customHit || item.liveMatched || item.containsHit)
+      .slice(0, limit);
+    const out = {
+      input: rawValue,
+      parsed,
+      compileError,
+      flags: 'mu',
+      remote: {
+        active: remoteRulesActive,
+        version: remoteRulesCache?.rulesVersion || '',
+        updatedAt: remoteRulesCache?.updatedAt || '',
+        fetchedAt: remoteRulesCache?.fetchedAt || 0,
+        lastError: remoteRulesLastError,
+        lastChange: remoteRulesLastChange,
+        regexCount: remoteRegexRules.length,
+      },
+      counts: {
+        liveRegex: SUSPECT_RE_KWS.length,
+        remoteRegex: remoteRegexRules.length,
+        deletedRegex: Array.isArray(delRegexRules) ? delRegexRules.length : 0,
+      },
+      membership: {
+        variants,
+        liveExact: debugRuleExactMatches(SUSPECT_RE_KWS, variants),
+        remoteExact: debugRuleExactMatches(remoteRegexRules, variants),
+        deletedExact: debugRuleExactMatches(delRegexRules, variants),
+      },
+      page: {
+        path: location.pathname,
+        articleCount: document.querySelectorAll('article[data-testid="tweet"]').length,
+        returnedArticles: articles.length,
+      },
+      articles,
+    };
+    console.group('[XFS DEBUG] rule snapshot');
+    console.log(out);
+    console.table(articles.map(a => ({
+      index: a.index,
+      handle: a.handle,
+      main: a.isMainTweet,
+      verified: a.isProtectedVerified,
+      customHit: a.customHit,
+      liveMatched: a.liveMatched,
+      liveCats: a.liveCats.join(','),
+      hideMatched: a.dataset.xfsHideMatched,
+      text: a.fullText.slice(0, 160),
+    })));
+    console.groupEnd();
+    if (opts.copy !== false) {
+      copyText(JSON.stringify(out, null, 2)).then(ok => {
+        showToast(ok ? 'XFS rule debug 已复制' : 'XFS rule debug 已输出到 Console', !ok);
+      });
+    }
+    return out;
+  }
+
   function exposeDebugTools() {
     const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     win.XFS_DEBUG = {
       referral: referralDebugSnapshot,
       probeReferral: referralDebugProbe,
+      rule: debugRuleSnapshot,
+      hideRepair: debugHideRepairSnapshot,
       clearReferralState() {
         referralCache.clear();
         referralFailureCache.clear();
@@ -1743,6 +1968,7 @@
         return true;
       },
     };
+    win.xfsDebugRule = debugRuleSnapshot;
   }
 
   // Strip Unicode Format-category characters (zero-width spaces, soft hyphens, etc.)
@@ -2085,63 +2311,306 @@
     else delete art.dataset.xfsHideRuleStats;
   }
 
+  function markHideSyncDirty() {
+    hideSyncDirty = true;
+  }
+
+  function bumpHideRulesGeneration() {
+    hideRulesGeneration += 1;
+    markHideSyncDirty();
+  }
+
+  function flushHideRuleStats() {
+    if (hideRuleStatsFlushTimer) {
+      clearTimeout(hideRuleStatsFlushTimer);
+      hideRuleStatsFlushTimer = null;
+    }
+    if (!hideRuleStatsPending || !hideRuleStatsPending.size) return;
+    const pending = hideRuleStatsPending;
+    hideRuleStatsPending = null;
+    const stats = loadHideRuleStats();
+    const now = Date.now();
+    pending.forEach((count, id) => {
+      const idx = id.indexOf('\n');
+      if (idx <= 0) return;
+      const type = id.slice(0, idx);
+      const key = id.slice(idx + 1);
+      const prev = stats[id] && typeof stats[id] === 'object' ? stats[id] : {};
+      stats[id] = { type, key, count: Math.max(0, Number(prev.count || 0)) + count, updatedAt: now };
+    });
+    GM_setValue(HIDE_RULE_STATS_KEY, stats);
+  }
+
+  function scheduleHideRuleStatsFlush() {
+    if (hideRuleStatsFlushTimer) return;
+    hideRuleStatsFlushTimer = setTimeout(flushHideRuleStats, HIDE_STATS_FLUSH_MS);
+  }
+
   function isMainTweetArticle(art) {
     if (!art || !/\/status\/\d/.test(location.pathname) || isListPage()) return false;
     return art === document.querySelector('article[data-testid="tweet"]');
   }
 
-  function clearMainTweetXfsState(art) {
-    if (!art) return;
-    art.dataset.xfsHideMatched = '0';
-    art.dataset.xfsReferralAccount = '0';
-    delete art.dataset.xfsBlocked;
-    delete art.dataset.xfsHideRuleStats;
-    delete art.dataset.xfsHideStatsRecorded;
-    clearBlockedArticleStyle(art);
-    art.querySelectorAll?.('[data-testid="User-Name"] a').forEach(a => a.style.removeProperty('text-decoration'));
-    if (art.dataset.xfsHidden === '1') {
-      art.dataset.xfsHidden = '';
-      ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
-        .forEach(p => art.style.removeProperty(p));
-    }
+  function contentFilterAllowedOnCurrentRoute() {
+    return location.pathname !== '/home' && !isListPage();
   }
 
-  function clearProtectedVerifiedArticleState(art) {
-    if (!art) return;
+  function currentStatusPathKey(path = location.pathname) {
+    const m = String(path || '').match(/^(\/[^/]+\/status\/\d+)/);
+    return m?.[1] || '';
+  }
+
+  function parseCompactMetricCount(raw) {
+    const text = String(raw || '').replace(/,/g, '').trim();
+    const m = text.match(/(\d+(?:\.\d+)?)\s*([KMB万億亿]?)/i);
+    if (!m) return null;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n)) return null;
+    const suffix = (m[2] || '').toLowerCase();
+    const mult = suffix === 'k' ? 1000
+      : suffix === 'm' ? 1000000
+      : suffix === 'b' ? 1000000000
+      : suffix === '万' ? 10000
+      : (suffix === '億' || suffix === '亿') ? 100000000
+      : 1;
+    return Math.round(n * mult);
+  }
+
+  function formatCompactMetricCount(n) {
+    const value = Math.max(0, Number(n || 0) || 0);
+    if (value < 10000) return String(value);
+    if (value < 1000000) return `${Math.round(value / 100) / 10}K`;
+    return `${Math.round(value / 100000) / 10}M`;
+  }
+
+  function mainTweetReplyButton() {
+    if (!/\/status\/\d/.test(location.pathname) || isListPage()) return null;
+    const pathKey = currentStatusPathKey();
+    const main = document.querySelector('article[data-testid="tweet"]');
+    if (!main) return null;
+    const statusLinks = [...main.querySelectorAll('a[href*="/status/"]')];
+    if (pathKey && statusLinks.length && !statusLinks.some(a => String(a.getAttribute('href') || '').startsWith(pathKey))) {
+      return null;
+    }
+    return main?.querySelector?.('button[data-testid="reply"][aria-label]') || null;
+  }
+
+  function readMainTweetReplyTotal() {
+    const label = mainTweetReplyButton()?.getAttribute('aria-label') || '';
+    const m = label.match(/([\d.,]+(?:\s*[KMB万億亿])?)\s*(?:repl(?:y|ies)|回复|則回覆|則回應)/i);
+    return m ? parseCompactMetricCount(m[1]) : null;
+  }
+
+  function replyArticleIdentity(art) {
+    if (!art || isMainTweetArticle(art)) return '';
+    const time = art.querySelector('a[href*="/status/"] time');
+    const href = time?.closest?.('a[href*="/status/"]')?.getAttribute('href') || '';
+    const status = href.match(/\/status\/(\d+)/)?.[1];
+    if (status) return `status:${status}`;
     const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
-    const isBlocked = handle && blockedHandles.has(handle);
+    const text = stripInvisible((art.querySelector('[data-testid="tweetText"]')?.textContent || '').slice(0, 80));
+    return handle || text ? `fallback:${handle}:${text}` : '';
+  }
+
+  function articleCountsAsVisibleReply(art) {
+    if (!art || isMainTweetArticle(art)) return false;
+    if (art.dataset.xfsHidden === '1') return false;
+    const rect = art.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 2;
+  }
+
+  function replyCountTextLeaf(btn) {
+    const leaves = [...(btn?.querySelectorAll?.('span') || [])]
+      .filter(span => !span.children.length && /\d/.test(span.textContent || ''));
+    return leaves[leaves.length - 1] || null;
+  }
+
+  function resetVisibleReplyCount() {
+    visibleReplyCountPath = currentStatusPathKey();
+    visibleReplySeen = new Map();
+    const old = document.querySelector('[data-xfs-reply-count="1"]');
+    if (old?.dataset.xfsOriginalText) old.textContent = old.dataset.xfsOriginalText;
+    old?.removeAttribute('data-xfs-reply-count');
+    old?.removeAttribute('data-xfs-original-text');
+  }
+
+  function observeVisibleReplyCountButton(btn) {
+    if (visibleReplyCountObservedButton === btn) return;
+    visibleReplyCountObserver?.disconnect();
+    visibleReplyCountObserver = null;
+    visibleReplyCountObservedButton = btn || null;
+    if (!btn) return;
+    visibleReplyCountObserver = new MutationObserver(() => scheduleVisibleReplyCountUpdate(80));
+    visibleReplyCountObserver.observe(btn, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['aria-label'],
+    });
+  }
+
+  function updateVisibleReplyCount() {
+    const pathKey = currentStatusPathKey();
+    if (!pathKey) {
+      if (visibleReplyCountPath) resetVisibleReplyCount();
+      observeVisibleReplyCountButton(null);
+      return false;
+    }
+    if (visibleReplyCountPath !== pathKey) resetVisibleReplyCount();
+    const btn = mainTweetReplyButton();
+    observeVisibleReplyCountButton(btn);
+    const total = readMainTweetReplyTotal();
+    const leaf = replyCountTextLeaf(btn);
+    if (!btn || !leaf || total == null) return false;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      const key = replyArticleIdentity(art);
+      if (!key) return;
+      visibleReplySeen.set(key, articleCountsAsVisibleReply(art));
+    });
+    const visible = [...visibleReplySeen.values()].filter(Boolean).length;
+    const hidden = Math.max(0, total - visible);
+    const percent = total > 0 ? Math.round((visible / total) * 1000) / 10 : 0;
+    const tooltip = [
+      `XFS 可见回复：${visible} / ${total}`,
+      `可见比例：${percent}%`,
+      `估算不可见回复：${hidden}`,
+      '左边是当前已加载且未被 XFS 折叠隐藏的回复数；右边是 X 显示的总回复数。',
+      '不可见部分通常是你已经拉黑/屏蔽的账号发的回复，也可能包含 X 尚未加载或平台自己折叠的回复。',
+    ].join('\n');
+    if (!leaf.dataset.xfsOriginalText) leaf.dataset.xfsOriginalText = leaf.textContent || '';
+    leaf.dataset.xfsReplyCount = '1';
+    const nextText = `${formatCompactMetricCount(visible)}/${formatCompactMetricCount(total)}`;
+    if (leaf.textContent !== nextText) leaf.textContent = nextText;
+    leaf.title = tooltip;
+    leaf.closest('span')?.setAttribute('title', tooltip);
+    btn.title = tooltip;
+    return true;
+  }
+
+  function scheduleVisibleReplyCountUpdate(delay = 120) {
+    clearTimeout(visibleReplyCountTimer);
+    visibleReplyCountTimer = setTimeout(updateVisibleReplyCount, delay);
+  }
+
+  function startVisibleReplyCountWatchdog(duration = 30000, interval = 700) {
+    clearTimeout(visibleReplyCountWatchdogTimer);
+    const until = Date.now() + duration;
+    const tick = () => {
+      if (!currentStatusPathKey()) {
+        observeVisibleReplyCountButton(null);
+        return;
+      }
+      const ok = updateVisibleReplyCount();
+      if (Date.now() < until) {
+        visibleReplyCountWatchdogTimer = setTimeout(tick, ok ? Math.max(interval, 1000) : 250);
+      }
+    };
+    tick();
+  }
+
+  function removeArticleHiddenStyle(art) {
+    if (!art) return;
+    art.dataset.xfsHidden = '';
+    ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
+      .forEach(p => art.style.removeProperty(p));
+  }
+
+  function applyArticleHiddenStyle(art) {
+    if (!art) return;
+    art.dataset.xfsHidden = '1';
+    clearBlockedArticleStyle(art);
+    art.style.setProperty('max-height',    '2px',    'important');
+    art.style.setProperty('min-height',    '0',      'important');
+    art.style.setProperty('overflow',      'hidden', 'important');
+    art.style.setProperty('padding',       '0',      'important');
+    art.style.setProperty('margin-top',    '0',      'important');
+    art.style.setProperty('margin-bottom', '0',      'important');
+    art.style.setProperty('pointer-events','none',   'important');
+    art.style.setProperty('border-bottom', `1px solid ${C.border}`, 'important');
+  }
+
+  function clearInlineButtonContentMatchState(btn) {
+    btn.dataset.xfsMatched = '0';
+    btn.dataset.xfsHideOnlyMatched = '0';
+    delete btn.dataset.xfsMatchTooltip;
+    delete btn.dataset.xfsHideOnlyTooltip;
+  }
+
+  function clearInlineButtonReferralState(btn) {
+    btn.dataset.xfsReferralAccount = '0';
+    delete btn.dataset.xfsReferralTooltip;
+  }
+
+  function clearArticleContentMatchState(art) {
     art.dataset.xfsHideMatched = '0';
-    art.dataset.xfsReferralAccount = '0';
-    art.dataset.xfsReferralQueued = '0';
-    if (isBlocked) art.dataset.xfsBlocked = '1';
-    else delete art.dataset.xfsBlocked;
     delete art.dataset.xfsHideRuleStats;
     delete art.dataset.xfsHideStatsRecorded;
-    clearBlockedArticleStyle(art);
-    if (isBlocked) applyBlockedArticleStyle(art);
-    if (art.dataset.xfsHidden === '1') {
-      art.dataset.xfsHidden = '';
-      ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
-        .forEach(p => art.style.removeProperty(p));
-    }
-    if (handle) {
-      matchedHandlesInView.delete(handle);
-      matchedUsersCache.delete(handle);
-    }
     art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => {
-      btn.dataset.xfsMatched = '0';
-      btn.dataset.xfsHideOnlyMatched = '0';
-      btn.dataset.xfsReferralAccount = '0';
-      delete btn.dataset.xfsMatchTooltip;
-      delete btn.dataset.xfsHideOnlyTooltip;
-      delete btn.dataset.xfsReferralTooltip;
+      clearInlineButtonContentMatchState(btn);
       updateInlineBlockButton(btn);
     });
   }
 
-  function clearProtectedVerifiedArticlesInView() {
+  function clearArticleReferralState(art) {
+    art.dataset.xfsReferralAccount = '0';
+    art.dataset.xfsReferralQueued = '0';
+    delete art.dataset.xfsReferralUrl;
+    art.querySelectorAll?.('button[data-xfs-handle]').forEach(btn => {
+      clearInlineButtonReferralState(btn);
+      updateInlineBlockButton(btn);
+    });
+  }
+
+  function syncArticleHiddenStyle(art) {
+    const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
+    const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
+    const shouldHideBlocked = shouldHideBlockedArticles() && art.dataset.xfsBlocked === '1';
+    const shouldHide = shouldHideMatched || shouldHideReferral || shouldHideBlocked;
+    if (shouldHide) {
+      if (shouldHideMatched) incrementHideRuleStatsFromArticle(art);
+      applyArticleHiddenStyle(art);
+    } else if (!shouldHide && art.dataset.xfsHidden === '1') {
+      removeArticleHiddenStyle(art);
+      if (art.dataset.xfsBlocked === '1') applyBlockedArticleStyle(art);
+    }
+    scheduleVisibleReplyCountUpdate();
+  }
+
+  function clearMainTweetXfsState(art) {
+    if (!art) return;
+    clearArticleContentMatchState(art);
+    clearArticleReferralState(art);
+    delete art.dataset.xfsBlocked;
+    clearBlockedArticleStyle(art);
+    art.querySelectorAll?.('[data-testid="User-Name"] a').forEach(a => a.style.removeProperty('text-decoration'));
+    if (art.dataset.xfsHidden === '1') removeArticleHiddenStyle(art);
+  }
+
+  function clearProtectedVerifiedArticleState(art, opts = {}) {
+    if (!art) return;
+    const handle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+    const isBlocked = handle && blockedHandles.has(handle);
+    const clearContentMatch = opts.force === true
+      || opts.clearContent === true
+      || opts.preserveMatchedHide === false
+      || !canHideProtectedVerifiedMatch(art);
+    if (clearContentMatch) clearArticleContentMatchState(art);
+    clearArticleReferralState(art);
+    if (isBlocked) art.dataset.xfsBlocked = '1';
+    else delete art.dataset.xfsBlocked;
+    clearBlockedArticleStyle(art);
+    if (isBlocked) applyBlockedArticleStyle(art);
+    if (handle) {
+      matchedHandlesInView.delete(handle);
+      matchedUsersCache.delete(handle);
+    }
+    syncArticleHiddenStyle(art);
+  }
+
+  function clearProtectedVerifiedArticlesInView(opts = {}) {
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
-      if (isProtectedVerifiedArticle(art)) clearProtectedVerifiedArticleState(art);
+      if (isProtectedVerifiedArticle(art)) clearProtectedVerifiedArticleState(art, { preserveMatchedHide: !opts.force });
     });
     updateHideBadge();
     updateReferralBadge();
@@ -2157,24 +2626,25 @@
     let items = [];
     try { items = JSON.parse(art.dataset.xfsHideRuleStats || '[]'); } catch (_) {}
     if (!Array.isArray(items) || items.length === 0) return;
-    const stats = loadHideRuleStats();
+    if (!hideRuleStatsPending) hideRuleStatsPending = new Map();
     items.forEach(item => {
       const type = item?.type;
       const key = String(item?.key || '').trim();
       if (!type || !key) return;
       const id = `${type}\n${key}`;
-      const prev = stats[id] && typeof stats[id] === 'object' ? stats[id] : {};
-      stats[id] = { type, key, count: Math.max(0, Number(prev.count || 0)) + 1, updatedAt: Date.now() };
+      hideRuleStatsPending.set(id, (hideRuleStatsPending.get(id) || 0) + 1);
     });
-    GM_setValue(HIDE_RULE_STATS_KEY, stats);
+    scheduleHideRuleStatsFlush();
     art.dataset.xfsHideStatsRecorded = '1';
   }
 
   // ── Page scanner ─────────────────────────────────────────────────────
-  function scanPage() {
+  function scanPage(opts = {}) {
     reloadKws();
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     const userMap = new Map();
+    const markMatches = !!opts.markMatches;
+    const hideMarked = !!opts.hideMarked;
 
     articles.forEach(art => {
       if (isMainTweetArticle(art)) return;
@@ -2188,7 +2658,9 @@
 
       const handle = extractHandleFromArticle(art);
       if (!handle) return;
-      if (blockedHandles.has(normalizeHandle(handle))) return;
+      const key = normalizeHandle(handle);
+      if (isCurrentProfileTimelineOwnerHandle(key)) return;
+      if (blockedHandles.has(key)) return;
 
       const displayName = extractDisplayNameFromArticle(art, handle) || handle;
 
@@ -2209,6 +2681,10 @@
 
       const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits } = matchesFilters(displayName, fullText);
       setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
+      if (markMatches) {
+        art.dataset.xfsHideMatched = (matched && !blockedHandles.has(key)) ? '1' : '0';
+        if (hideMarked) syncArticleHiddenStyle(art);
+      }
       if (!matched) return;
 
       // First 10 words of tweet body — shown in panel for name/heart matches
@@ -2248,7 +2724,12 @@
   }
 
   function isBlockAuthLostError(err) {
-    return !!err?.xfsAuthLost || /\bHTTP\s*(?:401|403|419)\b|auth|login|logout|csrf|ct0/i.test(String(err?.message || err || ''));
+    if (err?.xfsAuthLost) return true;
+    const status = Number(err?.status || 0);
+    const text = `${err?.message || err || ''} ${err?.responseText || ''}`;
+    if ([401, 419].includes(status)) return true;
+    if (status === 403) return /auth|authenticate|login|logout|csrf|ct0|credential/i.test(text);
+    return /auth|authenticate|login|logout|csrf|ct0|credential/i.test(String(err?.message || err || ''));
   }
 
   function isBlockRateLimitError(err) {
@@ -2258,10 +2739,28 @@
   function blockHttpError(status, body = '') {
     const msg = `HTTP ${status}`;
     const n = Number(status);
-    const err = [401, 403, 419].includes(n) ? blockAuthError(msg) : (n === 429 ? blockRateLimitError(msg) : new Error(msg));
+    const err = [401, 419].includes(n) ? blockAuthError(msg) : (n === 429 ? blockRateLimitError(msg) : new Error(msg));
     err.status = status;
     err.responseText = body;
     return err;
+  }
+
+  function blockErrorMessage(err) {
+    const status = err?.status ? `HTTP ${err.status}` : '';
+    const message = String(err?.message || err || 'failed');
+    return status && !message.includes(status) ? `${status}: ${message}` : message;
+  }
+
+  function isRetryableBlockError(err) {
+    const status = Number(err?.status || 0);
+    if (status >= 500) return true;
+    if ([0, 408, 425].includes(status)) return true;
+    return /network|timeout|temporar/i.test(String(err?.message || err || ''));
+  }
+
+  function globalBlockQueueRetryDelay(attempts) {
+    const step = Math.max(1, Number(attempts || 1));
+    return Math.min(GLOBAL_BLOCK_QUEUE_RETRY_MAX, GLOBAL_BLOCK_QUEUE_RETRY_BASE * step);
   }
 
   function pauseGlobalQueueForAuthLoss(reason = '登录状态失效') {
@@ -2486,6 +2985,7 @@
     if (opts.restoreSettings !== false && typeof prev === 'boolean') {
       skipVerifiedAccountsActive = prev;
       GM_setValue('skip_verified_accounts', skipVerifiedAccountsActive);
+      bumpHideRulesGeneration();
     }
     if (experimentalBrowseBlockHeartbeatTimer) {
       clearInterval(experimentalBrowseBlockHeartbeatTimer);
@@ -2506,17 +3006,7 @@
 
   function experimentalBrowseBlockActive() {
     const state = readExperimentalBrowseBlockState();
-    if (!state.enabled) return false;
-    const now = Date.now();
-    if (state.expiresAt <= now) {
-      disableExperimentalBrowseBlock('边刷边拉黑已自动关闭：超过 24 小时');
-      return false;
-    }
-    if (state.heartbeatAt && now - state.heartbeatAt > EXPERIMENT_BROWSE_BLOCK_HEARTBEAT_STALE) {
-      disableExperimentalBrowseBlock('边刷边拉黑已自动关闭：新的浏览周期');
-      return false;
-    }
-    return true;
+    return !!state.enabled;
   }
 
   function enableExperimentalBrowseBlock() {
@@ -2526,12 +3016,10 @@
     writeExperimentalBrowseBlockState({
       enabled: true,
       activatedAt: now,
-      expiresAt: now + EXPERIMENT_BROWSE_BLOCK_MAX_AGE,
+      expiresAt: 0,
       heartbeatAt: now,
-      prevSkipVerified: skipVerifiedAccountsActive,
+      prevSkipVerified: null,
     });
-    skipVerifiedAccountsActive = true;
-    GM_setValue('skip_verified_accounts', true);
     resetGlobalQueueRound();
     startExperimentalBrowseBlockHeartbeat();
     updateGlobalBlockQueuePanel();
@@ -2542,7 +3030,7 @@
     reapplyContentRulesForVisible();
     injectInlineButtons();
     flushMatchedUsersCacheToBrowseQueue();
-    showToast(`边刷边拉黑已开启：慢速排队 ${experimentSlowBlockGapText()}，会员保护已强制开启`, false);
+    showToast(`边刷边拉黑已开启：慢速排队 ${experimentSlowBlockGapText()}，会员保护${skipVerifiedAccountsActive ? '开启' : '关闭'}`, false);
   }
 
   function startExperimentalBrowseBlockHeartbeat() {
@@ -2553,8 +3041,8 @@
     writeExperimentalBrowseBlockState(current);
     experimentalBrowseBlockHeartbeatTimer = setInterval(() => {
       const state = readExperimentalBrowseBlockState();
-      if (!state.enabled || state.expiresAt <= Date.now()) {
-        disableExperimentalBrowseBlock(state.enabled ? '边刷边拉黑已自动关闭：超过 24 小时' : '');
+      if (!state.enabled) {
+        disableExperimentalBrowseBlock('');
         return;
       }
       state.heartbeatAt = Date.now();
@@ -2564,7 +3052,9 @@
 
   function maybeAutoQueueBrowseMatchedUser(user, sourceArticle) {
     if (!experimentalBrowseBlockActive()) return;
+    if (sweepQuietModeActive) return;
     const key = normalizeHandle(user?.handle);
+    if (isCurrentProfileTimelineOwnerHandle(key)) return;
     if (!key || blockedHandles.has(key) || globalBlockQueueItemForHandle(key)) return;
     if (sourceArticle && isProtectedVerifiedArticle(sourceArticle)) return;
     const result = enqueueGlobalBlockUsers([{ ...user, handle: key, source: 'browse_auto' }], 'browse_auto');
@@ -2575,13 +3065,18 @@
   }
 
   function flushMatchedUsersCacheToBrowseQueue() {
+    if (sweepQuietModeActive) return;
     if (!experimentalBrowseBlockActive() || !matchedUsersCache.size) return;
     const users = Array.from(matchedUsersCache.values())
       .map(user => {
         const key = normalizeHandle(user?.handle);
         return key ? { ...user, handle: key, source: 'browse_auto' } : null;
       })
-      .filter(user => user && !blockedHandles.has(user.handle) && !globalBlockQueueItemForHandle(user.handle) && !isProtectedVerifiedHandle(user.handle));
+      .filter(user => user
+        && !isCurrentProfileTimelineOwnerHandle(user.handle)
+        && !blockedHandles.has(user.handle)
+        && !globalBlockQueueItemForHandle(user.handle)
+        && !isProtectedVerifiedHandle(user.handle));
     if (!users.length) return;
     const result = enqueueGlobalBlockUsers(users, 'browse_auto');
     if (result.added) showToast(`边刷边拉黑：已补入队 ${result.added} 个已扫到账号`, false);
@@ -2594,8 +3089,25 @@
     return { version: 1, updatedAt: Number(q.updatedAt || 0) || Date.now(), items };
   }
 
+  function compactTerminalGlobalQueueItem(item) {
+    if (!item || !['done', 'failed', 'skipped'].includes(item.status || 'queued')) return item;
+    return {
+      handle: normalizeHandle(item.handle),
+      displayName: String(item.displayName || item.handle || ''),
+      source: String(item.source || ''),
+      status: item.status,
+      attempts: Math.max(0, Number(item.attempts || 0) || 0),
+      addedAt: Number(item.addedAt || 0) || Date.now(),
+      updatedAt: Number(item.updatedAt || 0) || Date.now(),
+      error: String(item.error || '').slice(0, 160),
+    };
+  }
+
   function writeGlobalBlockQueue(q) {
     const items = q.items && typeof q.items === 'object' ? q.items : {};
+    Object.keys(items).forEach(key => {
+      items[key] = compactTerminalGlobalQueueItem(items[key]);
+    });
     const done = Object.values(items)
       .filter(item => ['done', 'failed', 'skipped'].includes(item?.status))
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -2605,6 +3117,7 @@
       if (['done', 'failed', 'skipped'].includes(item?.status) && !keepDone.has(normalizeHandle(item.handle))) delete items[key];
     });
     GM_setValue(GLOBAL_BLOCK_QUEUE_KEY, { version: 1, updatedAt: Date.now(), items });
+    markHideSyncDirty();
   }
 
   function globalBlockQueueItems(q = readGlobalBlockQueue()) {
@@ -2633,7 +3146,7 @@
   const GLOBAL_QUEUE_STATUS_LABELS = {
     queued: '排队',
     running: '执行中',
-    done: '完成',
+    done: '已拉黑',
     failed: '失败',
     skipped: '跳过',
   };
@@ -2663,9 +3176,11 @@
       .map(item => {
         const status = item.status || 'queued';
         const label = GLOBAL_QUEUE_STATUS_LABELS[status] || status;
+        const retryAt = Number(item.nextAttemptAt || 0);
         const detail = [
           item.source ? `来源 ${item.source}` : '',
           item.attempts ? `尝试 ${item.attempts}` : '',
+          retryAt > Date.now() ? `重试 ${formatGlobalQueueCooldown(retryAt - Date.now())} 后` : '',
           item.error ? `错误 ${item.error}` : '',
         ].filter(Boolean).join(' · ');
         const previewCats = normalizeQueuePreviewCats(item.previewCats);
@@ -2718,6 +3233,10 @@
       const item = q.items[key];
       if (item?.status === 'running' && now - Number(item.updatedAt || 0) > GLOBAL_BLOCK_QUEUE_LOCK_TTL * 2) {
         q.items[key] = { ...item, status: 'queued', updatedAt: now, error: 'worker expired' };
+        changed = true;
+      }
+      if (item?.status === 'queued' && Number(item.nextAttemptAt || 0) <= now && item.nextAttemptAt) {
+        q.items[key] = { ...item, nextAttemptAt: 0 };
         changed = true;
       }
     });
@@ -2825,6 +3344,15 @@
     return !!GM_getValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, true);
   }
 
+  function globalBlockQueueStripCollapsed() {
+    return !!GM_getValue(GLOBAL_BLOCK_QUEUE_STRIP_COLLAPSED_KEY, false);
+  }
+
+  function setGlobalBlockQueueStripCollapsed(collapsed) {
+    GM_setValue(GLOBAL_BLOCK_QUEUE_STRIP_COLLAPSED_KEY, !!collapsed);
+    updateGlobalBlockQueuePanel();
+  }
+
   function setGlobalBlockQueueMinimized(minimized) {
     GM_setValue(GLOBAL_BLOCK_QUEUE_MINIMIZED_KEY, !!minimized);
     globalQueuePanelSuppressed = false;
@@ -2834,6 +3362,8 @@
       updateGlobalBlockQueuePanel();
     } else {
       document.getElementById('xfs-global-block-queue')?.remove();
+      document.getElementById('xfs-global-block-queue-strip')?.remove();
+      GM_setValue(GLOBAL_BLOCK_QUEUE_STRIP_COLLAPSED_KEY, false);
       showGlobalBlockQueueDetailPanel();
     }
   }
@@ -2922,6 +3452,7 @@
     writeGlobalBlockQueue(q);
     updateGlobalBlockQueuePanel();
     refreshGlobalBlockQueueDetailPanel();
+    refreshGlobalQueueInlineButtons();
     return { ok: true, status: item.status || 'queued' };
   }
 
@@ -2940,6 +3471,34 @@
     if (cur?.tabId !== globalQueueTabId) return false;
     GM_setValue(GLOBAL_BLOCK_QUEUE_LOCK_KEY, { tabId: globalQueueTabId, heartbeatAt: now, expiresAt: now + GLOBAL_BLOCK_QUEUE_LOCK_TTL });
     return true;
+  }
+
+  function heartbeatGlobalBlockQueueRunningItem(key) {
+    const norm = normalizeHandle(key);
+    if (!norm) return;
+    const q = readGlobalBlockQueue();
+    const item = q.items?.[norm];
+    if (item?.status !== 'running' || item.workerTab !== globalQueueTabId) return;
+    q.items[norm] = { ...item, updatedAt: Date.now() };
+    writeGlobalBlockQueue(q);
+  }
+
+  async function waitWithGlobalBlockQueueHeartbeat(promise, key) {
+    let settled = false;
+    const wrapped = Promise.resolve(promise).finally(() => { settled = true; });
+    while (!settled) {
+      const result = await Promise.race([
+        wrapped.then(value => ({ done: true, value }), err => ({ done: true, err })),
+        sleep(1000).then(() => ({ done: false })),
+      ]);
+      heartbeatGlobalBlockQueueLock();
+      heartbeatGlobalBlockQueueRunningItem(key);
+      if (result.done) {
+        if ('err' in result) throw result.err;
+        return result.value;
+      }
+    }
+    return wrapped;
   }
 
   function releaseGlobalBlockQueueLock() {
@@ -2975,8 +3534,8 @@
     });
   }
 
-  function syncCompletedGlobalBlocksToThisTab() {
-    globalBlockQueueItems()
+  function syncCompletedGlobalBlocksToThisTab(q = readGlobalBlockQueue()) {
+    globalBlockQueueItems(q)
       .filter(item => item.status === 'done')
       .forEach(item => {
         const key = normalizeHandle(item.handle);
@@ -2984,9 +3543,12 @@
       });
   }
 
-  function refreshGlobalQueueInlineButtons() {
+  function refreshGlobalQueueInlineButtons(q = readGlobalBlockQueue()) {
+    const items = q.items || {};
     document.querySelectorAll('button[data-xfs-handle]').forEach(btn => {
-      if (btn.dataset.xfsState !== 'blocked') updateInlineBlockButton(btn);
+      if (btn.dataset.xfsState !== 'blocked') {
+        updateInlineBlockButton(btn, items[normalizeHandle(btn.dataset.xfsHandle)] || null);
+      }
     });
   }
 
@@ -3003,8 +3565,9 @@
           if (globalBlockQueuePaused()) break;
         }
         const q = recoverStaleGlobalBlockQueueItems();
+        const now = Date.now();
         const next = globalBlockQueueItems(q)
-          .filter(item => item.status === 'queued')
+          .filter(item => item.status === 'queued' && Number(item.nextAttemptAt || 0) <= now)
           .sort((a, b) => Number(a.addedAt || 0) - Number(b.addedAt || 0))[0];
         if (!next) break;
         const key = normalizeHandle(next.handle);
@@ -3018,9 +3581,20 @@
         updateGlobalBlockQueuePanel();
         refreshGlobalQueueInlineButtons();
         try {
-          await blockUserCoordinated(next.handle, csrf, null, {
-            slow: experimentalBrowseBlockActive() || next.source === 'browse_auto',
-          });
+          const blockResult = await waitWithGlobalBlockQueueHeartbeat(
+            blockUserCoordinated(next.handle, csrf, () => !globalBlockQueuePaused(), {
+              slow: experimentalBrowseBlockActive() || next.source === 'browse_auto',
+            }),
+            key
+          );
+          if (blockResult?.skipped) {
+            const skippedFresh = readGlobalBlockQueue();
+            if (skippedFresh.items[key]?.status === 'running') {
+              skippedFresh.items[key] = { ...skippedFresh.items[key], status: 'queued', updatedAt: Date.now(), error: 'paused before block' };
+              writeGlobalBlockQueue(skippedFresh);
+            }
+            break;
+          }
           const fresh = readGlobalBlockQueue();
           fresh.items[key] = { ...fresh.items[key], status: 'done', updatedAt: Date.now(), error: '' };
           writeGlobalBlockQueue(fresh);
@@ -3046,7 +3620,20 @@
             break;
           }
           const fresh = readGlobalBlockQueue();
-          fresh.items[key] = { ...fresh.items[key], status: 'failed', updatedAt: Date.now(), error: e?.message || String(e || 'failed') };
+          const current = fresh.items[key] || next;
+          const attempts = Math.max(1, Number(current.attempts || next.attempts || 1));
+          const error = blockErrorMessage(e);
+          if (isRetryableBlockError(e) && attempts < GLOBAL_BLOCK_QUEUE_MAX_ATTEMPTS) {
+            fresh.items[key] = {
+              ...current,
+              status: 'queued',
+              nextAttemptAt: Date.now() + globalBlockQueueRetryDelay(attempts),
+              updatedAt: Date.now(),
+              error,
+            };
+          } else {
+            fresh.items[key] = { ...current, status: 'failed', nextAttemptAt: 0, updatedAt: Date.now(), error };
+          }
           writeGlobalBlockQueue(fresh);
           refreshGlobalBlockQueueDetailPanel();
           refreshGlobalQueueInlineButtons();
@@ -3110,22 +3697,21 @@
 
   // ── Visual feedback: dim articles belonging to a blocked handle ──────
   function dimArticlesByHandle(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
       if (isMainTweetArticle(art)) {
         clearMainTweetXfsState(art);
         return;
       }
+      const artHandle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+      if (artHandle !== key) return;
       if (isProtectedVerifiedArticle(art)) {
         clearProtectedVerifiedArticleState(art);
         return;
       }
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
-      let isMatch = false;
-      for (const sp of nameEl.querySelectorAll('span')) {
-        if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
-      }
-      if (!isMatch) return;
       art.dataset.xfsBlocked = '1';
       art.dataset.xfsHideMatched = '0';
       art.dataset.xfsReferralAccount = '0';
@@ -3145,14 +3731,13 @@
   }
 
   function undimArticlesByHandle(handle) {
+    const key = normalizeHandle(handle);
+    if (!key) return;
     document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      const artHandle = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+      if (artHandle !== key) return;
       const nameEl = art.querySelector('[data-testid="User-Name"]');
       if (!nameEl) return;
-      let isMatch = false;
-      for (const sp of nameEl.querySelectorAll('span')) {
-        if (normalizeHandle(sp.textContent.trim()) === normalizeHandle(handle)) { isMatch = true; break; }
-      }
-      if (!isMatch) return;
       delete art.dataset.xfsBlocked;
       for (const a of nameEl.querySelectorAll('a')) {
         const txt = getTextWithEmoji(a).trim();
@@ -3406,6 +3991,249 @@
     };
   }
 
+  function closeKeywordPanel() {
+    document.getElementById(KEYWORD_PANEL_ID)?.remove();
+  }
+
+  function renderKeywordPanelBody(container) {
+    container.innerHTML = '';
+    const rowCss = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
+    const refreshKwPanel = () => renderKeywordPanelBody(container);
+
+    const toolsRow = document.createElement('div');
+    toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:6px;min-height:28px;';
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = '导出自定义';
+    exportBtn.title = '只复制手动添加的自定义关键词 JSON，不包含系统预设';
+    exportBtn.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:4px 10px;font-size:12px;line-height:18px;font-weight:600;cursor:pointer;`;
+    exportBtn.onclick = exportKws;
+    const mergeBtn = document.createElement('button');
+    mergeBtn.textContent = '合并导入';
+    mergeBtn.title = '导入自定义关键词 JSON，并与当前自定义规则合并';
+    mergeBtn.style.cssText = exportBtn.style.cssText;
+    mergeBtn.onclick = () => importKws('merge');
+    const replaceBtn = document.createElement('button');
+    replaceBtn.textContent = '覆盖导入';
+    replaceBtn.title = '用导入 JSON 覆盖当前自定义规则，系统预设不受影响';
+    replaceBtn.style.cssText = exportBtn.style.cssText;
+    replaceBtn.onclick = () => importKws('replace');
+    toolsRow.appendChild(exportBtn);
+    toolsRow.appendChild(mergeBtn);
+    toolsRow.appendChild(replaceBtn);
+    container.appendChild(toolsRow);
+
+    const appendKeywordRow = (type, list, color, labelText, inputPlaceholder, inputTitle = '', normalizeValue = null) => {
+      const row = document.createElement('div');
+      row.style.cssText = rowCss;
+      const label = document.createElement('span');
+      label.textContent = labelText;
+      label.style.cssText = `font-size:10px;color:${color};flex-shrink:0;min-width:52px;`;
+      row.appendChild(label);
+      list.forEach((kw, i) => {
+        const chip = document.createElement('span');
+        chip.title = ruleTitle(type, i, kw);
+        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${color};border-radius:10px;font-size:10px;color:${color};max-width:500px;`;
+        const text = document.createElement('span');
+        text.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        text.textContent = kw;
+        const del = document.createElement('button');
+        del.textContent = '×';
+        del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${color};padding:0;line-height:1;flex-shrink:0;`;
+        del.onclick = () => { removeManualKeyword(type, kw); };
+        chip.appendChild(text);
+        chip.appendChild(del);
+        row.appendChild(chip);
+      });
+      const input = document.createElement('input');
+      input.placeholder = inputPlaceholder;
+      input.title = inputTitle;
+      input.style.cssText = `border:1px solid ${color};border-radius:10px;padding:5px 9px;font-size:10px;width:320px;min-width:170px;outline:none;`;
+      const addValue = () => {
+        const raw = input.value.trim();
+        if (!raw) return;
+        const value = normalizeValue ? normalizeValue(raw, input) : raw;
+        if (!value) return;
+        if (addManualKeyword(type, value)) input.value = '';
+        else input.value = '';
+      };
+      input.onkeydown = e => { if (e.key === 'Enter') addValue(); };
+      row.appendChild(input);
+      const addBtn = document.createElement('button');
+      addBtn.textContent = '+';
+      addBtn.style.cssText = `background:${color};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
+      addBtn.onclick = addValue;
+      row.appendChild(addBtn);
+      container.appendChild(row);
+      return input;
+    };
+
+    appendKeywordRow('name', SUSPECT_NAME_KWS, C.nameKw, '用户名:', '+ 用户名');
+    appendKeywordRow('content', SUSPECT_KWS, C.btnBorder, '内容:', '+ 内容');
+
+    const reSection = document.createElement('div');
+    reSection.style.cssText = 'display:flex;flex-direction:column;gap:6px;border-top:1px solid rgba(207,217,222,0.7);padding-top:8px;';
+    const reHeader = document.createElement('div');
+    reHeader.style.cssText = rowCss;
+    const reToggle = document.createElement('button');
+    reToggle.type = 'button';
+    reToggle.textContent = keywordPanelRegexRulesOpen ? '▾' : '▸';
+    reToggle.title = keywordPanelRegexRulesOpen ? '收起正则规则' : '展开正则规则';
+    reToggle.style.cssText = `width:20px;height:20px;padding:0;border:1px solid ${C.regexKw};border-radius:7px;background:#fff;color:${C.regexKw};font-size:12px;font-weight:800;line-height:18px;cursor:pointer;`;
+    reToggle.onclick = () => { keywordPanelRegexRulesOpen = !keywordPanelRegexRulesOpen; refreshKwPanel(); };
+    const reLbl = document.createElement('span');
+    reLbl.textContent = `正则 (${SUSPECT_RE_KWS.length})`;
+    reLbl.style.cssText = `font-size:10px;color:${C.regexKw};font-weight:700;flex-shrink:0;`;
+    const reTip = document.createElement('span');
+    reTip.textContent = '?';
+    reTip.title = '正则很有效，懂的话可以新增；不懂建议别删，删除会明显削弱匹配。';
+    reTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.regexKw};border-radius:50%;font-size:10px;font-weight:700;color:${C.regexKw};cursor:help;`;
+    reHeader.appendChild(reToggle);
+    reHeader.appendChild(reLbl);
+    reHeader.appendChild(reTip);
+    reSection.appendChild(reHeader);
+    if (keywordPanelRegexRulesOpen) {
+      const addRegexRow = (type, list, color, titleText, noteText, inputPlaceholder, inputTitle, normalizeValue, scopeGuard = null) => {
+        const section = document.createElement('div');
+        section.style.cssText = `display:flex;flex-direction:column;gap:6px;padding-top:4px;${type === 'regex' ? '' : `border-top:1px dashed ${color};margin-top:2px;`}`;
+        if (titleText) {
+          const header = document.createElement('div');
+          header.style.cssText = rowCss;
+          const lbl = document.createElement('span');
+          lbl.textContent = `${titleText} (${list.length})`;
+          lbl.style.cssText = `font-size:10px;color:${color};font-weight:700;flex-shrink:0;`;
+          header.appendChild(lbl);
+          if (noteText) {
+            const tip = document.createElement('span');
+            tip.textContent = '?';
+            tip.title = noteText;
+            tip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${color};border-radius:50%;font-size:10px;font-weight:700;color:${color};cursor:help;`;
+            header.appendChild(tip);
+          }
+          section.appendChild(header);
+        }
+        if (type !== 'regex') {
+          const note = document.createElement('div');
+          note.textContent = noteText;
+          note.style.cssText = `font-size:10px;line-height:1.4;color:${C.sub};padding:6px 8px;border:1px solid ${color};border-radius:8px;background:${type === 'hide_only_regex' ? '#effaf7' : '#fff9f2'};`;
+          section.appendChild(note);
+        }
+        const row = document.createElement('div');
+        row.style.cssText = rowCss;
+        list.forEach((pat, i) => {
+          const chip = document.createElement('span');
+          chip.title = ruleTitle(type, i, pat);
+          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${color};border-radius:10px;font-size:10px;color:${color};max-width:500px;`;
+          const lbl = document.createElement('span');
+          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          lbl.textContent = pat;
+          const del = document.createElement('button');
+          del.textContent = '×';
+          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${color};padding:0;line-height:1;flex-shrink:0;`;
+          del.onclick = () => { removeManualKeyword(type, pat); };
+          chip.appendChild(lbl);
+          chip.appendChild(del);
+          row.appendChild(chip);
+        });
+        const input = document.createElement('input');
+        input.placeholder = inputPlaceholder;
+        input.title = inputTitle;
+        input.style.cssText = `border:1px solid ${color};border-radius:10px;padding:5px 9px;font-size:10px;width:320px;min-width:260px;outline:none;`;
+        const validate = raw => {
+          const parsed = _regexPatternParts(raw);
+          if (scopeGuard && !scopeGuard(parsed)) throw new Error('scope');
+          if (!parsed.pat) throw new Error('empty regex');
+          new RegExp(parsed.pat, 'mu');
+          return normalizeValue ? normalizeValue(parsed) : raw;
+        };
+        const addRegex = () => {
+          const raw = input.value.trim();
+          if (!raw) return;
+          try {
+            const value = validate(raw);
+            input.style.borderColor = color;
+            if (addManualKeyword(type, value)) input.value = '';
+            else input.value = '';
+          } catch (_) {
+            input.style.borderColor = C.blockRed;
+          }
+        };
+        input.onkeydown = e => { if (e.key === 'Enter') addRegex(); };
+        input.oninput = () => {
+          const raw = input.value.trim();
+          if (!raw) {
+            input.style.borderColor = color;
+            return;
+          }
+          try {
+            validate(raw);
+            input.style.borderColor = color;
+          } catch (_) {
+            input.style.borderColor = C.blockRed;
+          }
+        };
+        row.appendChild(input);
+        const addBtn = document.createElement('button');
+        addBtn.textContent = '+';
+        addBtn.style.cssText = `background:${color};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
+        addBtn.onclick = addRegex;
+        row.appendChild(addBtn);
+        section.appendChild(row);
+        return section;
+      };
+
+      reSection.appendChild(addRegexRow('regex', SUSPECT_RE_KWS, C.regexKw, '', null, '+ 正则', '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 content: 或 name: 限定匹配范围'));
+      reSection.appendChild(addRegexRow('hide_only_regex', HIDE_ONLY_RE_KWS, C.mute, '只隐藏正则', '这是专门给“超级有效、但误伤也偏高”的规则准备的。命中后只隐藏，不会仅因这条规则进入自动拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。', '+ 只隐藏正则', '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；默认按 content: 内容范围处理。适合高效果但高误伤、只想先隐藏降噪的规则。', parsed => `content:${parsed.pat}`, parsed => parsed.scope === 'both' || parsed.scope === 'body'));
+      reSection.appendChild(addRegexRow('referral_profile_regex', REFERRAL_PROFILE_RE_KWS, C.referral, '导流号主页正则', '这一类规则专门用于主页导流识别，匹配对象是主页简介、名称、位置以及主页上的链接文本。命中后会放宽为“主页存在导流意图”，再结合主页链接进入导流号判断。', '+ 导流号主页正则', '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 profile: 前缀，或直接输入无前缀正则。', parsed => `profile:${parsed.pat}`, parsed => parsed.scope === 'both' || parsed.scope === 'profile'));
+    }
+    container.appendChild(reSection);
+  }
+
+  function showKeywordPanel(opts = {}) {
+    closeKeywordPanel();
+    const top = 52;
+    const panel = document.createElement('div');
+    panel.id = KEYWORD_PANEL_ID;
+    panel.style.cssText = [
+      'position:fixed', `right:${toolbarRightPx(40)}`, `top:${top}px`,
+      'width:min(560px, calc(100vw - 24px))', `height:calc(100vh - ${top + 16}px)`,
+      'box-sizing:border-box', 'background:rgba(255,255,255,0.97)',
+      'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)',
+      `border:1px solid ${C.btnBorder}`, 'border-radius:12px',
+      'box-shadow:0 10px 28px rgba(0,0,0,0.18)',
+      'display:flex', 'flex-direction:column', 'overflow:hidden',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      `color:${C.text}`, 'font-size:12px', 'z-index:2147483647',
+    ].join(';');
+
+    const hdr = document.createElement('div');
+    hdr.style.cssText = `padding:8px 12px;border-bottom:1px solid ${C.border};display:flex;align-items:center;gap:8px;flex-shrink:0;`;
+    const title = document.createElement('div');
+    title.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;';
+    const titleMain = document.createElement('span');
+    titleMain.textContent = '关键词定义';
+    titleMain.style.cssText = 'font-size:13px;font-weight:700;';
+    const titleSub = document.createElement('span');
+    titleSub.textContent = '独立右侧面板；可一边看队列，一边调关键词、正则和只隐藏正则。';
+    titleSub.style.cssText = `font-size:10px;color:${C.sub};`;
+    title.appendChild(titleMain);
+    title.appendChild(titleSub);
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u00d7';
+    closeBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:16px;color:${C.sub};padding:0 2px;line-height:1;`;
+    closeBtn.onclick = closeKeywordPanel;
+    hdr.appendChild(title);
+    hdr.appendChild(closeBtn);
+
+    const body = document.createElement('div');
+    body.dataset.xfsKeywordBody = '1';
+    body.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;';
+    renderKeywordPanelBody(body);
+    panel.appendChild(hdr);
+    panel.appendChild(body);
+    document.body.appendChild(panel);
+    if (opts.scrollTop) body.scrollTop = opts.scrollTop;
+  }
+
   function showPanel(allUsers, opts = {}) {
     document.getElementById('xfs-panel')?.remove();
     document.getElementById('xfs-panel-dock')?.remove();
@@ -3443,7 +4271,7 @@
     // Estimate how many rows fit in one column based on viewport height.
     // ROW_H: conservative height covering both simple rows and suspect rows with context.
     const ROW_H = 34;
-    const estBodyH = Math.max(200, window.innerHeight - 160); // 160 = top offset + hdr + kwBar + ftr
+    const estBodyH = Math.max(200, window.innerHeight - 160); // 160 = top offset + hdr + ftr
     const rowsPerCol = Math.max(6, Math.floor(estBodyH / ROW_H));
     const colsNeeded = ordered.length === 0 ? 2
       : Math.min(3, Math.max(2, Math.ceil(ordered.length / rowsPerCol)));
@@ -3528,345 +4356,15 @@
     hdr.appendChild(dockBtn);
     hdr.appendChild(closeBtn);
 
-    // ── Keyword management bar ──
-    const kwBar = document.createElement('div');
-    kwBar.id = 'xfs-kw-bar';
-    kwBar.style.cssText = [
-      'position:absolute', 'top:42px', 'left:12px', 'right:12px',
-      'box-sizing:border-box',
-      'max-height:min(72vh, calc(100vh - 125px))',
-      'overflow:auto',
-      `padding:10px 12px`, `border:1px solid ${C.border}`,
-      'border-radius:10px',
-      'display:flex', 'flex-direction:column', 'gap:8px',
-      'background:rgba(255,255,255,0.98)',
-      'box-shadow:0 8px 22px rgba(0,0,0,0.16)',
-      'z-index:2',
-    ].join(';');
-
-    let regexRulesOpen = false;
-    function renderKwBar() {
-      kwBar.innerHTML = '';
-      const rowCss = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
-      const refreshKwPanel = () => renderKwBar();
-      const toolsRow = document.createElement('div');
-      toolsRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:6px;min-height:28px;';
-      const exportBtn = document.createElement('button');
-      exportBtn.textContent = '导出自定义';
-      exportBtn.title = '只复制手动添加的自定义关键词 JSON，不包含系统预设';
-      exportBtn.style.cssText = `background:#fff;color:${C.text};border:1px solid ${C.btnBorder};border-radius:8px;padding:4px 10px;font-size:12px;line-height:18px;font-weight:600;cursor:pointer;`;
-      exportBtn.onclick = exportKws;
-      const mergeBtn = document.createElement('button');
-      mergeBtn.textContent = '合并导入';
-      mergeBtn.title = '导入自定义关键词 JSON，并与当前自定义规则合并';
-      mergeBtn.style.cssText = exportBtn.style.cssText;
-      mergeBtn.onclick = () => importKws('merge');
-      const replaceBtn = document.createElement('button');
-      replaceBtn.textContent = '覆盖导入';
-      replaceBtn.title = '用导入 JSON 覆盖当前自定义规则，系统预设不受影响';
-      replaceBtn.style.cssText = exportBtn.style.cssText;
-      replaceBtn.onclick = () => importKws('replace');
-      toolsRow.appendChild(exportBtn);
-      toolsRow.appendChild(mergeBtn);
-      toolsRow.appendChild(replaceBtn);
-      kwBar.appendChild(toolsRow);
-
-      // ── Row 1: Content keywords ──
-      const textRow = document.createElement('div');
-      textRow.style.cssText = rowCss;
-      const textLbl = document.createElement('span');
-      textLbl.textContent = '内容:';
-      textLbl.style.cssText = `font-size:10px;color:${C.sub};flex-shrink:0;min-width:36px;`;
-      textRow.appendChild(textLbl);
-      SUSPECT_KWS.forEach((kw, i) => {
-        const chip = document.createElement('span');
-        chip.title = ruleTitle('content', i, kw);
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.btnBorder};border-radius:10px;font-size:10px;color:${C.text};`;
-        chip.textContent = kw + ' ';
-        const del = document.createElement('button');
-        del.textContent = '×';
-        del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.sub};padding:0;line-height:1;`;
-        del.onclick = () => { removeManualKeyword('content', kw); };
-        chip.appendChild(del);
-        textRow.appendChild(chip);
-      });
-      const inp = document.createElement('input');
-      inp.placeholder = '+ 内容';
-      inp.style.cssText = `border:1px solid ${C.btnBorder};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
-      const addKw = () => {
-        const v = inp.value.trim();
-        if (v && addManualKeyword('content', v)) inp.value = '';
-        else inp.value = '';
-      };
-      inp.onkeydown = e => { if (e.key === 'Enter') addKw(); };
-      textRow.appendChild(inp);
-      const addBtn = document.createElement('button');
-      addBtn.textContent = '+';
-      addBtn.style.cssText = `background:${C.blockRed};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-      addBtn.onclick = addKw;
-      textRow.appendChild(addBtn);
-      // ── Row 2: Name keywords ──
-      const nameRow = document.createElement('div');
-      nameRow.style.cssText = rowCss;
-      const nameLbl = document.createElement('span');
-      nameLbl.textContent = '用户名:';
-      nameLbl.style.cssText = `font-size:10px;color:${C.nameKw};flex-shrink:0;min-width:36px;`;
-      nameRow.appendChild(nameLbl);
-      SUSPECT_NAME_KWS.forEach((kw, i) => {
-        const chip = document.createElement('span');
-        chip.title = ruleTitle('name', i, kw);
-        chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.nameKw};border-radius:10px;font-size:10px;color:${C.nameKw};`;
-        chip.textContent = kw + ' ';
-        const del = document.createElement('button');
-        del.textContent = '×';
-        del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.nameKw};padding:0;line-height:1;`;
-        del.onclick = () => { removeManualKeyword('name', kw); };
-        chip.appendChild(del);
-        nameRow.appendChild(chip);
-      });
-      const nInp = document.createElement('input');
-      nInp.placeholder = '+ 用户名';
-      nInp.style.cssText = `border:1px solid ${C.nameKw};border-radius:10px;padding:5px 9px;font-size:10px;width:150px;min-width:150px;outline:none;`;
-      const addNKw = () => {
-        const v = nInp.value.trim();
-        if (v && addManualKeyword('name', v)) nInp.value = '';
-        else nInp.value = '';
-      };
-      nInp.onkeydown = e => { if (e.key === 'Enter') addNKw(); };
-      nameRow.appendChild(nInp);
-      const addNBtn = document.createElement('button');
-      addNBtn.textContent = '+';
-      addNBtn.style.cssText = `background:${C.nameKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-      addNBtn.onclick = addNKw;
-      nameRow.appendChild(addNBtn);
-      kwBar.appendChild(nameRow);
-      kwBar.appendChild(textRow);
-
-      // ── Row 3: RegEx patterns ──
-      const reSection = document.createElement('div');
-      reSection.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
-      const reHeader = document.createElement('div');
-      reHeader.style.cssText = rowCss;
-      const reToggle = document.createElement('button');
-      reToggle.type = 'button';
-      reToggle.textContent = regexRulesOpen ? '▾' : '▸';
-      reToggle.title = regexRulesOpen ? '收起正则规则' : '展开正则规则';
-      reToggle.style.cssText = `width:20px;height:20px;padding:0;border:1px solid ${C.regexKw};border-radius:7px;background:#fff;color:${C.regexKw};font-size:12px;font-weight:800;line-height:18px;cursor:pointer;`;
-      reToggle.onclick = () => { regexRulesOpen = !regexRulesOpen; refreshKwPanel(); };
-      const reLbl = document.createElement('span');
-      reLbl.textContent = `正则 (${SUSPECT_RE_KWS.length})`;
-      reLbl.style.cssText = `font-size:10px;color:${C.regexKw};font-weight:700;flex-shrink:0;`;
-      const reTip = document.createElement('span');
-      reTip.textContent = '?';
-      reTip.title = '正则很有效，懂的话可以新增；不懂建议别删，删除会明显削弱匹配。';
-      reTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.regexKw};border-radius:50%;font-size:10px;font-weight:700;color:${C.regexKw};cursor:help;`;
-      reHeader.appendChild(reToggle);
-      reHeader.appendChild(reLbl);
-      reHeader.appendChild(reTip);
-      reSection.appendChild(reHeader);
-      if (regexRulesOpen) {
-        const reRow = document.createElement('div');
-        reRow.style.cssText = rowCss;
-        SUSPECT_RE_KWS.forEach((pat, i) => {
-          const chip = document.createElement('span');
-          chip.title = ruleTitle('regex', i, pat);
-          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.regexKw};border-radius:10px;font-size:10px;color:${C.regexKw};max-width:360px;`;
-          const lbl = document.createElement('span');
-          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-          lbl.textContent = pat;
-          const del = document.createElement('button');
-          del.textContent = '×';
-          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.regexKw};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { removeManualKeyword('regex', pat); };
-          chip.appendChild(lbl);
-          chip.appendChild(del);
-          reRow.appendChild(chip);
-        });
-        const reInp = document.createElement('input');
-        reInp.placeholder = '+ 正则';
-        reInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 content: 或 name: 限定匹配范围';
-        reInp.style.cssText = `border:1px solid ${C.regexKw};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
-        const addRe = () => {
-          const v = reInp.value.trim();
-          if (!v) return;
-          const parsed = _regexPatternParts(v);
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { reInp.style.borderColor = C.blockRed; return; }
-          reInp.style.borderColor = C.regexKw;
-          if (addManualKeyword('regex', v)) reInp.value = '';
-          else reInp.value = '';
-        };
-        reInp.onkeydown = e => { if (e.key === 'Enter') addRe(); };
-        reInp.oninput   = () => {
-          const v = reInp.value.trim();
-          if (!v) { reInp.style.borderColor = C.regexKw; return; }
-          const parsed = _regexPatternParts(v);
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); reInp.style.borderColor = C.regexKw; }
-          catch (_) { reInp.style.borderColor = C.blockRed; }
-        };
-        reRow.appendChild(reInp);
-        const addReBtn = document.createElement('button');
-        addReBtn.textContent = '+';
-        addReBtn.style.cssText = `background:${C.regexKw};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-        addReBtn.onclick = addRe;
-        reRow.appendChild(addReBtn);
-        reSection.appendChild(reRow);
-
-        const hideOnlySection = document.createElement('div');
-        hideOnlySection.style.cssText = `display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px dashed ${C.mute};margin-top:2px;`;
-        const hideOnlyHeader = document.createElement('div');
-        hideOnlyHeader.style.cssText = rowCss;
-        const hideOnlyLbl = document.createElement('span');
-        hideOnlyLbl.textContent = `只隐藏正则 (${HIDE_ONLY_RE_KWS.length})`;
-        hideOnlyLbl.style.cssText = `font-size:10px;color:${C.mute};font-weight:700;flex-shrink:0;`;
-        const hideOnlyTip = document.createElement('span');
-        hideOnlyTip.textContent = '?';
-        hideOnlyTip.title = '这是专门给“超级有效、但误伤也偏高”的规则准备的。命中后只隐藏，不会仅因这条规则进入自动拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。';
-        hideOnlyTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.mute};border-radius:50%;font-size:10px;font-weight:700;color:${C.mute};cursor:help;`;
-        hideOnlyHeader.appendChild(hideOnlyLbl);
-        hideOnlyHeader.appendChild(hideOnlyTip);
-        hideOnlySection.appendChild(hideOnlyHeader);
-
-        const hideOnlyNote = document.createElement('div');
-        hideOnlyNote.textContent = '这一类规则特别适合“超级有效、能大幅降噪，但误伤也明显偏高”的模式。命中后只折叠回复，不会仅因这条规则进入自动拉黑候选；如果同时命中更严格规则，仍然照常进入拉黑流。拿不准、又怕误伤时，优先先放这里，别直接放进自动拉黑规则。';
-        hideOnlyNote.style.cssText = `font-size:10px;line-height:1.4;color:${C.sub};padding:6px 8px;border:1px solid ${C.mute};border-radius:8px;background:#effaf7;`;
-        hideOnlySection.appendChild(hideOnlyNote);
-
-        const hideOnlyRow = document.createElement('div');
-        hideOnlyRow.style.cssText = rowCss;
-        HIDE_ONLY_RE_KWS.forEach((pat, i) => {
-          const chip = document.createElement('span');
-          chip.title = ruleTitle('hide_only_regex', i, pat);
-          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.mute};border-radius:10px;font-size:10px;color:${C.mute};max-width:360px;`;
-          const lbl = document.createElement('span');
-          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-          lbl.textContent = pat;
-          const del = document.createElement('button');
-          del.textContent = '×';
-          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.mute};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { removeManualKeyword('hide_only_regex', pat); };
-          chip.appendChild(lbl);
-          chip.appendChild(del);
-          hideOnlyRow.appendChild(chip);
-        });
-        const hideOnlyInp = document.createElement('input');
-        hideOnlyInp.placeholder = '+ 只隐藏正则';
-        hideOnlyInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；默认按 content: 内容范围处理。适合高效果但高误伤、只想先隐藏降噪的规则。';
-        hideOnlyInp.style.cssText = `border:1px solid ${C.mute};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
-        const addHideOnlyRe = () => {
-          const v = hideOnlyInp.value.trim();
-          if (!v) return;
-          const parsed = _regexPatternParts(v);
-          if (parsed.scope !== 'both' && parsed.scope !== 'body') { hideOnlyInp.style.borderColor = C.blockRed; return; }
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { hideOnlyInp.style.borderColor = C.blockRed; return; }
-          hideOnlyInp.style.borderColor = C.mute;
-          const normalized = `content:${parsed.pat}`;
-          if (addManualKeyword('hide_only_regex', normalized)) hideOnlyInp.value = '';
-          else hideOnlyInp.value = '';
-        };
-        hideOnlyInp.onkeydown = e => { if (e.key === 'Enter') addHideOnlyRe(); };
-        hideOnlyInp.oninput = () => {
-          const v = hideOnlyInp.value.trim();
-          if (!v) { hideOnlyInp.style.borderColor = C.mute; return; }
-          const parsed = _regexPatternParts(v);
-          if (parsed.scope !== 'both' && parsed.scope !== 'body') { hideOnlyInp.style.borderColor = C.blockRed; return; }
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); hideOnlyInp.style.borderColor = C.mute; }
-          catch (_) { hideOnlyInp.style.borderColor = C.blockRed; }
-        };
-        hideOnlyRow.appendChild(hideOnlyInp);
-        const addHideOnlyBtn = document.createElement('button');
-        addHideOnlyBtn.textContent = '+';
-        addHideOnlyBtn.style.cssText = `background:${C.mute};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-        addHideOnlyBtn.onclick = addHideOnlyRe;
-        hideOnlyRow.appendChild(addHideOnlyBtn);
-        hideOnlySection.appendChild(hideOnlyRow);
-
-        const referralProfileSection = document.createElement('div');
-        referralProfileSection.style.cssText = `display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px dashed ${C.referral};margin-top:2px;`;
-        const referralProfileHeader = document.createElement('div');
-        referralProfileHeader.style.cssText = rowCss;
-        const referralProfileLbl = document.createElement('span');
-        referralProfileLbl.textContent = `导流号主页正则 (${REFERRAL_PROFILE_RE_KWS.length})`;
-        referralProfileLbl.style.cssText = `font-size:10px;color:${C.referral};font-weight:700;flex-shrink:0;`;
-        const referralProfileTip = document.createElement('span');
-        referralProfileTip.textContent = '?';
-        referralProfileTip.title = '匹配主页资料文本和主页链接文本，用于导流号识别，不参与普通内容扫描。可输入 profile: 前缀，或直接输入无前缀正则。';
-        referralProfileTip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid ${C.referral};border-radius:50%;font-size:10px;font-weight:700;color:${C.referral};cursor:help;`;
-        referralProfileHeader.appendChild(referralProfileLbl);
-        referralProfileHeader.appendChild(referralProfileTip);
-        referralProfileSection.appendChild(referralProfileHeader);
-
-        const referralProfileNote = document.createElement('div');
-        referralProfileNote.textContent = '这一类规则专门用于主页导流识别，匹配对象是主页简介、名称、位置以及主页上的链接文本。命中后会放宽为“主页存在导流意图”，再结合主页链接进入导流号判断。';
-        referralProfileNote.style.cssText = `font-size:10px;line-height:1.4;color:${C.sub};padding:6px 8px;border:1px solid ${C.referral};border-radius:8px;background:#fff9f2;`;
-        referralProfileSection.appendChild(referralProfileNote);
-
-        const referralProfileRow = document.createElement('div');
-        referralProfileRow.style.cssText = rowCss;
-        REFERRAL_PROFILE_RE_KWS.forEach((pat, i) => {
-          const chip = document.createElement('span');
-          chip.title = ruleTitle('referral_profile_regex', i, pat);
-          chip.style.cssText = `display:inline-flex;align-items:center;gap:2px;padding:2px 6px;background:#fff;border:1px solid ${C.referral};border-radius:10px;font-size:10px;color:${C.referral};max-width:360px;`;
-          const lbl = document.createElement('span');
-          lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-          lbl.textContent = pat;
-          const del = document.createElement('button');
-          del.textContent = '×';
-          del.style.cssText = `background:none;border:none;cursor:pointer;font-size:11px;color:${C.referral};padding:0;line-height:1;flex-shrink:0;`;
-          del.onclick = () => { removeManualKeyword('referral_profile_regex', pat); };
-          chip.appendChild(lbl);
-          chip.appendChild(del);
-          referralProfileRow.appendChild(chip);
-        });
-        const referralProfileInp = document.createElement('input');
-        referralProfileInp.placeholder = '+ 导流号主页正则';
-        referralProfileInp.title = '输入 JS 正则表达式（不含 / 分隔符），flags: mu 自动加入；可加 profile: 前缀，或直接输入无前缀正则。';
-        referralProfileInp.style.cssText = `border:1px solid ${C.referral};border-radius:10px;padding:5px 9px;font-size:10px;width:260px;min-width:220px;outline:none;`;
-        const addReferralProfileRe = () => {
-          const v = referralProfileInp.value.trim();
-          if (!v) return;
-          const parsed = _regexPatternParts(v);
-          if (parsed.scope !== 'both' && parsed.scope !== 'profile') { referralProfileInp.style.borderColor = C.blockRed; return; }
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); } catch (_) { referralProfileInp.style.borderColor = C.blockRed; return; }
-          referralProfileInp.style.borderColor = C.referral;
-          const normalized = `profile:${parsed.pat}`;
-          if (addManualKeyword('referral_profile_regex', normalized)) referralProfileInp.value = '';
-          else referralProfileInp.value = '';
-        };
-        referralProfileInp.onkeydown = e => { if (e.key === 'Enter') addReferralProfileRe(); };
-        referralProfileInp.oninput = () => {
-          const v = referralProfileInp.value.trim();
-          if (!v) { referralProfileInp.style.borderColor = C.referral; return; }
-          const parsed = _regexPatternParts(v);
-          if (parsed.scope !== 'both' && parsed.scope !== 'profile') { referralProfileInp.style.borderColor = C.blockRed; return; }
-          try { if (!parsed.pat) throw new Error('empty regex'); new RegExp(parsed.pat, 'mu'); referralProfileInp.style.borderColor = C.referral; }
-          catch (_) { referralProfileInp.style.borderColor = C.blockRed; }
-        };
-        referralProfileRow.appendChild(referralProfileInp);
-        const addReferralProfileBtn = document.createElement('button');
-        addReferralProfileBtn.textContent = '+';
-        addReferralProfileBtn.style.cssText = `background:${C.referral};color:#fff;border:none;border-radius:10px;padding:4px 10px;font-size:11px;cursor:pointer;`;
-        addReferralProfileBtn.onclick = addReferralProfileRe;
-        referralProfileRow.appendChild(addReferralProfileBtn);
-        referralProfileSection.appendChild(referralProfileRow);
-        hideOnlySection.appendChild(referralProfileSection);
-        reSection.appendChild(hideOnlySection);
-      }
-      kwBar.appendChild(reSection);
-    }
-    renderKwBar();
-    kwBar.style.display = opts.keywordsOpen ? 'flex' : 'none'; // popup, collapsed by default
-
-    // Toggle button — inserted into hdr before the × close button
-    const kwToggle = document.createElement('button');
-    kwToggle.textContent = opts.keywordsOpen ? '关键词 ×' : '关键词';
-    kwToggle.style.cssText = `background:none;border:1px solid ${C.btnBorder};border-radius:8px;cursor:pointer;font-size:10px;color:${C.sub};padding:1px 6px;white-space:nowrap;`;
-    kwToggle.onclick = () => {
-      const nowHidden = kwBar.style.display === 'none';
-      kwBar.style.display = nowHidden ? 'flex' : 'none';
-      kwToggle.textContent = nowHidden ? '关键词 ×' : '关键词';
+    const kwBtn = document.createElement('button');
+    kwBtn.textContent = '关键词定义';
+    kwBtn.title = '打开右侧关键词定义面板';
+    kwBtn.style.cssText = `background:none;border:1px solid ${C.regexKw};border-radius:8px;cursor:pointer;font-size:10px;color:${C.regexKw};padding:1px 6px;white-space:nowrap;`;
+    kwBtn.onclick = () => {
+      closeToolsPanel();
+      showKeywordPanel();
     };
-    if (isGlobalQueueView) kwToggle.style.display = 'none';
-    hdr.insertBefore(kwToggle, closeBtn);
+    hdr.insertBefore(kwBtn, closeBtn);
 
     let dockIndicator = null;
     let dockIndicatorLabel = null;
@@ -4029,8 +4527,6 @@
         setGlobalBlockQueueMinimized(true);
         return;
       }
-      kwBar.style.display = 'none';
-      kwToggle.textContent = '关键词';
       panelDockedActive = true;
       GM_setValue('panel_docked', true);
       panel.style.display = 'none';
@@ -4057,7 +4553,7 @@
       colContainer.style.columnCount = 'auto';
       const empty = document.createElement('div');
       if (isGlobalQueueView && !globalQueueShowDone() && globalBlockQueueSummary().counts.done > 0) {
-        empty.textContent = '当前没有待处理账号；已屏蔽账号已折叠';
+        empty.textContent = '当前没有待处理账号；已完成账号已折叠，可点底部“显示已完成”查看';
       } else {
         empty.textContent = isGlobalQueueView ? '拉黑排队为空' : '未发现符合条件的用户';
       }
@@ -4072,6 +4568,11 @@
         const wrap = document.createElement('div');
         wrap.style.cssText = 'break-inside:avoid;page-break-inside:avoid;position:relative;';
 
+        const isDoneQueueItem = isGlobalQueueView && (user.queueStatus || 'queued') === 'done';
+        const isTerminalQueueItem = isGlobalQueueView && ['done', 'failed', 'skipped'].includes(user.queueStatus || 'queued');
+        const doneQueueColor = '#7a8791';
+        const queueStatusColor = isDoneQueueItem ? doneQueueColor : color;
+
         const row = document.createElement('div');
         row.style.cssText = `display:flex;align-items:flex-start;gap:4px;padding:1px ${isGlobalQueueView ? '22px' : '5px'} 1px 4px;cursor:pointer;border-bottom:1px solid ${C.border};border-left:3px solid ${color};line-height:1.18;`;
         row.title = hitTooltipFromUser(user);
@@ -4079,19 +4580,21 @@
         row.onmouseleave = () => { if (!row.dataset.blocked) row.style.background = ''; };
 
         if (isGlobalQueueView) {
-          const removeBtn = document.createElement('button');
           const running = (user.queueStatus || 'queued') === 'running';
-          removeBtn.type = 'button';
-          removeBtn.textContent = '×';
-          removeBtn.title = running ? `@${user.handle} 正在执行中，暂时不能移出队列` : `将 @${user.handle} 移出拉黑队列`;
-          removeBtn.disabled = running;
-          removeBtn.style.cssText = `position:absolute;top:4px;right:5px;z-index:1;width:14px;height:14px;padding:0;border:none;border-radius:999px;background:${running ? 'transparent' : 'rgba(15,20,25,0.06)'};color:${running ? C.mute : C.sub};font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:${running ? 'not-allowed' : 'pointer'};opacity:${running ? '0.45' : '1'};`;
-          removeBtn.onclick = e => {
-            e.stopPropagation();
-            const result = removeGlobalBlockQueueItem(user.handle);
-            if (!result.ok && result.reason === 'running') showToast(`@${user.handle} 正在执行中，暂时不能移出队列`, true);
-          };
-          wrap.appendChild(removeBtn);
+          if (!isDoneQueueItem) {
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.textContent = '×';
+            removeBtn.title = running ? `@${user.handle} 正在执行中，暂时不能移出队列` : `将 @${user.handle} 移出拉黑队列`;
+            removeBtn.disabled = running;
+            removeBtn.style.cssText = `position:absolute;top:4px;right:5px;z-index:1;width:14px;height:14px;padding:0;border:none;border-radius:999px;background:${running ? 'transparent' : 'rgba(15,20,25,0.06)'};color:${running ? C.mute : C.sub};font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:${running ? 'not-allowed' : 'pointer'};opacity:${running ? '0.45' : '1'};`;
+            removeBtn.onclick = e => {
+              e.stopPropagation();
+              const result = removeGlobalBlockQueueItem(user.handle);
+              if (!result.ok && result.reason === 'running') showToast(`@${user.handle} 正在执行中，暂时不能移出队列`, true);
+            };
+            wrap.appendChild(removeBtn);
+          }
         }
 
         let cb = null;
@@ -4099,7 +4602,7 @@
           const status = document.createElement('span');
           status.textContent = user.queueStatus === 'done' ? '✓' : (user.queueStatus === 'failed' ? '!' : (user.queueStatus === 'running' ? '…' : '•'));
           status.title = user.queueStatusLabel || user.queueStatus || 'queued';
-          status.style.cssText = `width:13px;margin-top:1px;flex-shrink:0;text-align:center;font-size:12px;font-weight:800;color:${color};`;
+          status.style.cssText = `width:13px;margin-top:1px;flex-shrink:0;text-align:center;font-size:12px;font-weight:800;color:${queueStatusColor};`;
           row.appendChild(status);
         } else {
           cb = document.createElement('input');
@@ -4121,7 +4624,7 @@
         let html = `<div class="xfs-name" style="font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;">${esc(user.displayName)}</a></div>`;
         html += `<div style="color:${C.sub};font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a class="xfs-profile-link" href="${profileUrl}" target="_blank" rel="noopener noreferrer" title="${esc(profileTitle)}" style="color:inherit;text-decoration:none;">@${esc(user.handle)}</a></div>`;
         if (isGlobalQueueView) {
-          html += `<div style="font-size:9px;color:${color};font-weight:700;">[${esc(user.queueStatusLabel || user.queueStatus || 'queued')}] ${esc(user.queueStatusDetail || '')}</div>`;
+          html += `<div style="font-size:9px;color:${queueStatusColor};font-weight:700;">[${esc(user.queueStatusLabel || user.queueStatus || 'queued')}] ${esc(user.queueStatusDetail || '')}</div>`;
           if (user.tweetSnippet) {
             html += `<div style="font-size:9px;color:${C.sub};font-style:italic;word-break:break-all;">"${esc(user.tweetSnippet)}"</div>`;
           }
@@ -4159,6 +4662,25 @@
           });
         }
         info.innerHTML = html;
+        if (isTerminalQueueItem) {
+          row.style.background = 'rgba(15,20,25,0.035)';
+          row.style.borderLeftColor = isDoneQueueItem ? doneQueueColor : C.mute;
+          info.style.opacity = '0.78';
+          const terminalBadge = document.createElement('div');
+          terminalBadge.textContent = user.queueStatusLabel || (isDoneQueueItem ? '已拉黑' : '已结束');
+          terminalBadge.style.cssText = `display:inline-block;margin:0 0 2px 0;padding:0 5px;border-radius:999px;background:rgba(15,20,25,0.08);color:${isDoneQueueItem ? doneQueueColor : C.mute};font-size:9px;font-weight:700;line-height:16px;`;
+          info.insertBefore(terminalBadge, info.firstChild);
+          Array.from(info.children).forEach(el => {
+            if (el === terminalBadge) return;
+            el.style.setProperty('font-style', 'normal', 'important');
+            el.style.setProperty('color', isDoneQueueItem ? doneQueueColor : C.mute, 'important');
+          });
+          info.querySelectorAll('a, span').forEach(el => {
+            el.style.setProperty('text-decoration', 'none', 'important');
+            el.style.setProperty('font-style', 'normal', 'important');
+            el.style.setProperty('color', isDoneQueueItem ? doneQueueColor : C.mute, 'important');
+          });
+        }
         info.querySelectorAll('a.xfs-profile-link').forEach(a => {
           a.addEventListener('click', e => e.stopPropagation());
         });
@@ -4193,8 +4715,8 @@
     if (isGlobalQueueView) {
       const refreshBtn = mkBtn('刷新', false);
       refreshBtn.onclick = showGlobalBlockQueueDetailPanel;
-      const doneToggleBtn = mkBtn(globalQueueShowDone() ? '折叠已屏蔽' : '已屏蔽', false);
-      doneToggleBtn.title = globalQueueShowDone() ? '隐藏已完成和已跳过账号' : '展开查看已完成和已跳过账号';
+      const doneToggleBtn = mkBtn(globalQueueShowDone() ? '隐藏已完成' : '显示已完成', false);
+      doneToggleBtn.title = globalQueueShowDone() ? '隐藏已完成和已跳过账号' : '显示已完成和已跳过账号';
       doneToggleBtn.onclick = () => setGlobalQueueShowDone(!globalQueueShowDone());
       const pauseBtn = mkBtn(globalBlockQueuePaused() ? '继续' : '暂停', false);
       pauseBtn.onclick = () => {
@@ -4337,7 +4859,6 @@
     scriptFtr.appendChild(xBlockedLink);
 
     panel.appendChild(hdr);
-    panel.appendChild(kwBar);
     panel.appendChild(body);
     panel.appendChild(ftr);
     panel.appendChild(hint);
@@ -4368,8 +4889,6 @@
     requestAnimationFrame(() => {
       colContainer.style.height = body.clientHeight + 'px';
       if (panelDockedActive) {
-        kwBar.style.display = 'none';
-        kwToggle.textContent = '关键词';
         panel.style.display = 'none';
         openDockIndicator();
       }
@@ -4459,6 +4978,14 @@
     updateScanButtonsLocked();
   }
 
+  async function waitForGlobalQueueWorkerIdle(timeout = 3000) {
+    const started = Date.now();
+    while (globalQueueWorkerActive && Date.now() - started < timeout) {
+      await sleep(120);
+    }
+    return !globalQueueWorkerActive;
+  }
+
   // ── Quick scan: show current DOM and immediately block checked users ──
   async function autoLoadAndScan() {
     if (!beginScanMode('content')) return;
@@ -4499,9 +5026,15 @@
   //   memory as we scroll back into their range, so no extra network requests.
   async function sweepAll() {
     if (!beginScanMode('sweep')) return;
+    const queueWasPaused = globalBlockQueuePaused();
+    let badge = null;
     try {
     stopBackgroundLoad = false;
-    applyHideAll(); // preserve hidden state during scrolling
+    sweepQuietModeActive = true;
+    if (!queueWasPaused) {
+      setGlobalBlockQueuePaused(true, { reason: 'sweep' });
+      await waitForGlobalQueueWorkerIdle(3000);
+    }
     const btn      = document.getElementById('xfs-btn');
     const sweepBtn = document.getElementById('xfs-sweep-btn');
     const MAX_DOWN = 60; // max scroll-down rounds to reach bottom
@@ -4511,7 +5044,7 @@
     if (btn)      { btn.disabled = true; btn.style.opacity = '0.4'; }
     if (sweepBtn) { sweepBtn.disabled = true; sweepBtn.style.opacity = '0.4'; }
 
-    const badge = document.createElement('div');
+    badge = document.createElement('div');
     badge.style.cssText = `position:fixed;bottom:220px;right:62px;font-size:10px;font-weight:700;font-family:monospace;color:#fff;border-radius:8px;padding:2px 6px;z-index:2147483647;pointer-events:none;`;
     document.body.appendChild(badge);
 
@@ -4551,7 +5084,7 @@
     const STEP = window.innerHeight * 0.85;
     for (let i = 0; i < MAX_UP; i++) {
       if (stopBackgroundLoad) break;
-      mergeInto(scanPage());
+      mergeInto(scanPage({ markMatches: true, hideMarked: true }));
       badge.textContent = `↑ 扫描 ${i + 1} · 已找 ${acc.size} 个`;
       if (window.scrollY <= 0) break;
       window.scrollTo({ top: Math.max(0, window.scrollY - STEP), behavior: 'instant' });
@@ -4559,14 +5092,20 @@
     }
 
     badge.remove();
-    applyHideAll(); // keep hide state applied after scanning
+    badge = null;
     // Merge users found by the hide feature that React may have unloaded from the DOM
     mergeInto(Array.from(matchedUsersCache.values()));
+    sweepQuietModeActive = false;
     autoQueueBlockUsers(Array.from(acc.values()), { queueSource: 'sweep', refreshButtonIds: ['xfs-sweep-btn'] });
+    applyHideAll(); // keep hide state applied after scanning
+    if (!queueWasPaused && globalBlockQueuePauseReason() === 'sweep') setGlobalBlockQueuePaused(false);
 
     if (btn)      { btn.disabled = false; btn.style.opacity = ''; }
     if (sweepBtn) { sweepBtn.disabled = false; sweepBtn.style.opacity = ''; }
     } finally {
+      if (badge) badge.remove();
+      sweepQuietModeActive = false;
+      if (!queueWasPaused && globalBlockQueuePauseReason() === 'sweep') setGlobalBlockQueuePaused(false);
       endScanMode('sweep');
     }
   }
@@ -4650,54 +5189,169 @@
   const EXPAND_SVG    = 'XFS';  // restore the right-side tool stack
 
   // ── Hide helpers ─────────────────────────────────────────────────────
-  function applyHideToArticle(art) {
+  function applyHideToArticle(art, opts = {}) {
+    if (sweepQuietModeActive) return;
+    if (!opts.immediate && shouldDeferHideLayout()) {
+      requestDeferredHideAll();
+      return;
+    }
     if (isMainTweetArticle(art)) {
       clearMainTweetXfsState(art);
       return;
     }
-    if (isProtectedVerifiedArticle(art)) {
-      clearProtectedVerifiedArticleState(art);
+    const key = normalizeHandle(art.dataset.xfsReferralHandle || extractHandleFromArticle(art));
+    if (key && blockedHandles.has(key)) {
+      art.dataset.xfsBlocked = '1';
+      art.dataset.xfsHideMatched = '0';
+      art.dataset.xfsReferralAccount = '0';
+      art.dataset.xfsReferralQueued = '0';
+    }
+    if (isProtectedVerifiedArticle(art) && !canHideProtectedVerifiedMatch(art)) {
+      clearProtectedVerifiedArticleState(art, { clearContent: true });
       return;
     }
-    const shouldHideMatched = hideMatchedActive && art.dataset.xfsHideMatched === '1';
-    const shouldHideReferral = hideReferralActive && art.dataset.xfsReferralAccount === '1';
-    const shouldHideBlocked = shouldHideBlockedArticles() && art.dataset.xfsBlocked === '1';
-    const shouldHide = shouldHideMatched || shouldHideReferral || shouldHideBlocked;
-    if (shouldHide && art.dataset.xfsHidden !== '1') {
-      if (shouldHideMatched) incrementHideRuleStatsFromArticle(art);
-      art.dataset.xfsHidden = '1';
-      clearBlockedArticleStyle(art);
-      art.style.setProperty('max-height',    '2px',    'important');
-      art.style.setProperty('min-height',    '0',      'important');
-      art.style.setProperty('overflow',      'hidden', 'important');
-      art.style.setProperty('padding',       '0',      'important');
-      art.style.setProperty('margin-top',    '0',      'important');
-      art.style.setProperty('margin-bottom', '0',      'important');
-      art.style.setProperty('pointer-events','none',   'important');
-      art.style.setProperty('border-bottom', `1px solid ${C.border}`, 'important');
-    } else if (!shouldHide && art.dataset.xfsHidden === '1') {
-      art.dataset.xfsHidden = '';
-      ['max-height','min-height','overflow','padding','margin-top','margin-bottom','pointer-events','border-bottom']
-        .forEach(p => art.style.removeProperty(p));
-      if (art.dataset.xfsBlocked === '1') applyBlockedArticleStyle(art);
-    }
+    syncArticleHiddenStyle(art);
   }
 
-  function applyHideAll() {
-    document.querySelectorAll('article[data-testid="tweet"]').forEach(applyHideToArticle);
+  function shouldDeferHideLayout() {
+    if (document.hidden) return false;
+    if (!/\/status\/\d/.test(location.pathname) || isListPage()) return false;
+    const now = Date.now();
+    return now < hideScrollActiveUntil || now < hideFastScrollUntil;
   }
 
-  function reapplyContentRulesForVisible() {
-    if (!/\/status\/\d/.test(location.pathname) || isListPage()) return;
-    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
-      if (isMainTweetArticle(art)) return;
-      if (isProtectedVerifiedArticle(art)) {
-        clearProtectedVerifiedArticleState(art);
+  function requestDeferredHideAll(delay = HIDE_SCROLL_IDLE_MS) {
+    clearTimeout(hideLayoutTimer);
+    hideLayoutTimer = setTimeout(() => {
+      hideLayoutTimer = null;
+      if (shouldDeferHideLayout()) {
+        requestDeferredHideAll();
         return;
+      }
+      applyHideAll({ immediate: true });
+    }, delay);
+  }
+
+  function scheduleHideAll(delay = 0) {
+    if (sweepQuietModeActive) return;
+    if (shouldDeferHideLayout()) {
+      requestDeferredHideAll();
+      return;
+    }
+    if (delay > 0) {
+      requestDeferredHideAll(delay);
+      return;
+    }
+    if (hideLayoutRaf) return;
+    hideLayoutRaf = requestAnimationFrame(() => {
+      hideLayoutRaf = 0;
+      applyHideAll({ immediate: true });
+    });
+  }
+
+  // New replies are often mounted before their text is complete.  Repair only
+  // the changed articles on the next frame so matching and collapsing do not
+  // wait for the whole timeline to stop mutating while the user scrolls.
+  function queueHideArticleRepair(art) {
+    if (!art || !contentFilterAllowedOnCurrentRoute() || sweepQuietModeActive) return;
+    hideArticleRepairQueue.add(art);
+    if (hideArticleRepairRaf) return;
+    hideArticleRepairRaf = requestAnimationFrame(processQueuedHideArticleRepairs);
+  }
+
+  function processQueuedHideArticleRepairs() {
+    hideArticleRepairRaf = 0;
+    if (sweepQuietModeActive || !contentFilterAllowedOnCurrentRoute()) {
+      hideArticleRepairQueue.clear();
+      return;
+    }
+    const queueItems = readGlobalBlockQueue().items || {};
+    let processed = 0;
+    for (const art of hideArticleRepairQueue) {
+      if (processed >= HIDE_ARTICLE_REPAIR_BATCH_SIZE) break;
+      hideArticleRepairQueue.delete(art);
+      if (!art.isConnected) continue;
+      applyContentRulesToArticle(art, {
+        queueItems,
+        hideImmediately: true,
+        // Keep the existing queue/block timing unchanged; this fast path is
+        // strictly for visual collapse.  The normal repair pass handles the
+        // existing auto-queue behavior after the DOM settles.
+        allowAutoQueue: false,
+      });
+      processed += 1;
+    }
+    if (hideArticleRepairQueue.size) {
+      hideArticleRepairRaf = requestAnimationFrame(processQueuedHideArticleRepairs);
+    }
+    if (processed) updateHideBadge();
+  }
+
+  function cancelQueuedHideArticleRepairs() {
+    if (hideArticleRepairRaf) cancelAnimationFrame(hideArticleRepairRaf);
+    hideArticleRepairRaf = 0;
+    hideArticleRepairQueue.clear();
+  }
+
+  function debugHideRepairSnapshot() {
+    const articles = [...document.querySelectorAll('article[data-testid="tweet"]')];
+    return {
+      path: location.pathname,
+      articleCount: articles.length,
+      queuedArticleCount: hideArticleRepairQueue.size,
+      fastRepairScheduled: !!hideArticleRepairRaf,
+      fullRepairScheduled: !!hideLayoutTimer,
+      collapsedArticleCount: articles.filter(art => art.dataset.xfsHidden === '1').length,
+      contentMatchedArticleCount: articles.filter(art => art.dataset.xfsHideMatched === '1').length,
+    };
+  }
+
+  function noteHideScrollActivity() {
+    const now = Date.now();
+    const y = window.scrollY || document.documentElement.scrollTop || 0;
+    const dt = Math.max(1, now - (hideLastScrollAt || now));
+    const prevY = Number.isFinite(hideLastScrollY) ? hideLastScrollY : y;
+    const dy = Math.abs(y - prevY);
+    hideScrollActiveUntil = now + HIDE_SCROLL_IDLE_MS;
+    if (dy >= HIDE_FAST_SCROLL_PX || (dt <= HIDE_FAST_SCROLL_WINDOW_MS && dy >= HIDE_FAST_SCROLL_PX / 2)) {
+      hideFastScrollUntil = now + HIDE_SCROLL_IDLE_MS + 120;
+    }
+    hideLastScrollY = y;
+    hideLastScrollAt = now;
+    if (hideLayoutTimer) requestDeferredHideAll();
+    scheduleHidePrewarm(350, { reset: false });
+  }
+
+  function applyHideAll(opts = {}) {
+    if (sweepQuietModeActive) return;
+    if (!hideSyncDirty && !opts.force) return;
+    if (!opts.immediate && shouldDeferHideLayout()) {
+      requestDeferredHideAll();
+      return;
+    }
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => applyHideToArticle(art, { immediate: opts.immediate }));
+    hideSyncDirty = false;
+    scheduleVisibleReplyCountUpdate();
+  }
+
+  function applyContentRulesToArticle(art, opts = {}) {
+      if (!art || isMainTweetArticle(art)) return false;
+      const isProtectedVerified = isProtectedVerifiedArticle(art);
+      if (isProtectedVerified && !canHideProtectedVerifiedMatch(art)) {
+        clearProtectedVerifiedArticleState(art, { preserveMatchedHide: true });
+        return false;
       }
       const handle = art.dataset.xfsReferralHandle || extractHandleFromArticle(art);
       const key = normalizeHandle(handle);
-      if (!key) return;
+      if (!key) return false;
+      if (isCurrentProfileTimelineOwnerHandle(key)) {
+        clearArticleContentMatchState(art);
+        matchedHandlesInView.delete(key);
+        matchedHandlesInView.delete(handle);
+        matchedUsersCache.delete(key);
+        matchedUsersCache.delete(handle);
+        return false;
+      }
       const displayName = extractDisplayNameFromArticle(art, key) || key;
       const textEl = art.querySelector('[data-testid="tweetText"]');
       const cardEl = art.querySelector('[data-testid="card.wrapper"]');
@@ -4710,6 +5364,15 @@
       const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits, allHideOnlyReHits } = matchesFilters(displayName, fullText);
       setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(key);
+      if (alreadyBlocked) {
+        art.dataset.xfsBlocked = '1';
+        art.dataset.xfsReferralAccount = '0';
+        art.dataset.xfsReferralQueued = '0';
+      }
+      if (isProtectedVerified) {
+        art.dataset.xfsReferralAccount = '0';
+        art.dataset.xfsReferralQueued = '0';
+      }
       art.dataset.xfsHideMatched = (matched && !alreadyBlocked) ? '1' : '0';
       const btn = art.querySelector(`button[data-xfs-handle]`);
       if (btn) {
@@ -4719,20 +5382,84 @@
         else delete btn.dataset.xfsMatchTooltip;
         if (allHideOnlyReHits.length > 0 && !alreadyBlocked) btn.dataset.xfsHideOnlyTooltip = '命中只隐藏不拉黑规则';
         else delete btn.dataset.xfsHideOnlyTooltip;
-        updateInlineBlockButton(btn);
+        if (opts.queueItems) updateInlineBlockButton(btn, opts.queueItems[key] || null);
+        else updateInlineBlockButton(btn);
       }
-      if (actionableMatched && !alreadyBlocked) {
+      if (opts.hideImmediately) syncArticleHiddenStyle(art);
+      if (opts.allowAutoQueue !== false && !isProtectedVerified && actionableMatched && !alreadyBlocked) {
         matchedHandlesInView.add(key);
         const user = { handle: key, displayName, cats: actionableCats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], hideOnlyReHits: [...hideOnlyReHits], tweetSnippet };
         matchedUsersCache.set(key, user);
         maybeAutoQueueBrowseMatchedUser(user, art);
-      } else {
+      } else if (opts.allowAutoQueue !== false) {
         matchedHandlesInView.delete(key);
         matchedUsersCache.delete(key);
       }
+      return matched && !alreadyBlocked;
+  }
+
+  function reapplyContentRulesForVisible() {
+    if (sweepQuietModeActive) return;
+    if (!contentFilterAllowedOnCurrentRoute()) return;
+    markHideSyncDirty();
+    const queueItems = readGlobalBlockQueue().items || {};
+    document.querySelectorAll('article[data-testid="tweet"]').forEach(art => {
+      applyContentRulesToArticle(art, { queueItems });
     });
     updateHideBadge();
     applyHideAll();
+  }
+
+  function runHidePrewarm() {
+    hidePrewarmIdleHandle = 0;
+    hidePrewarmIdleIsTimeout = false;
+    if (sweepQuietModeActive || document.hidden || !contentFilterAllowedOnCurrentRoute()) return;
+    const cutoffTop = window.innerHeight + HIDE_PREWARM_AHEAD_PX;
+    let processed = 0;
+    for (const art of document.querySelectorAll('article[data-testid="tweet"]')) {
+      if (processed >= HIDE_PREWARM_BATCH_SIZE) break;
+      if (art.dataset.xfsPrewarmChecked === String(hideRulesGeneration)) continue;
+      const rect = art.getBoundingClientRect();
+      // Include the current viewport and the next screenful.  The old
+      // comparison accidentally skipped this entire near-viewport range.
+      if (rect.bottom < -200 || rect.top > cutoffTop) continue;
+      art.dataset.xfsPrewarmChecked = String(hideRulesGeneration);
+      applyContentRulesToArticle(art, { hideImmediately: true, allowAutoQueue: false });
+      processed += 1;
+    }
+    if (processed >= HIDE_PREWARM_BATCH_SIZE) scheduleHidePrewarm(900, { reset: false });
+  }
+
+  function cancelHidePrewarm() {
+    if (hidePrewarmTimer) {
+      clearTimeout(hidePrewarmTimer);
+      hidePrewarmTimer = null;
+    }
+    if (hidePrewarmIdleHandle) {
+      if (hidePrewarmIdleIsTimeout) clearTimeout(hidePrewarmIdleHandle);
+      else window.cancelIdleCallback?.(hidePrewarmIdleHandle);
+      hidePrewarmIdleHandle = 0;
+      hidePrewarmIdleIsTimeout = false;
+    }
+  }
+
+  function scheduleHidePrewarm(delay = 900, opts = {}) {
+    if (hidePrewarmTimer || hidePrewarmIdleHandle) {
+      if (!opts.reset) return;
+      cancelHidePrewarm();
+    }
+    hidePrewarmTimer = setTimeout(() => {
+      hidePrewarmTimer = null;
+      if (hidePrewarmIdleHandle) return;
+      const run = () => runHidePrewarm();
+      if (window.requestIdleCallback) {
+        hidePrewarmIdleIsTimeout = false;
+        hidePrewarmIdleHandle = window.requestIdleCallback(run, { timeout: 1200 });
+      } else {
+        hidePrewarmIdleIsTimeout = true;
+        hidePrewarmIdleHandle = setTimeout(run, 80);
+      }
+    }, delay);
   }
 
   /*
@@ -4756,31 +5483,32 @@
     return '';
   }
 
-  function updateInlineBlockButton(btn) {
+  function updateInlineBlockButton(btn, queueItemArg) {
     const isBlocked = btn.dataset.xfsState === 'blocked';
-    const queueItem = isBlocked ? null : globalBlockQueueItemForHandle(btn.dataset.xfsHandle);
+    const queueItem = isBlocked ? null : (arguments.length >= 2 ? queueItemArg : globalBlockQueueItemForHandle(btn.dataset.xfsHandle));
     const queueStatus = queueItem?.status || '';
     const isQueued = ['queued', 'running'].includes(queueStatus);
+    const isRunning = queueStatus === 'running';
     const isFailed = queueStatus === 'failed';
     const reason = buttonMatchedReason(btn);
     const isHot = reason !== '';
     const color = reason === 'referral' ? C.referralHot : (reason === 'hide_only' ? C.hideOnlyHot : C.blockRed);
-    const stateColor = isBlocked ? C.mute : (isHot ? color : (isQueued ? C.nameKw : (isFailed ? C.blockRed : C.btnBorder)));
+    const stateColor = isBlocked ? C.mute : (isQueued ? C.blockRed : (isHot ? color : (isFailed ? C.blockRed : C.btnBorder)));
     btn.dataset.xfsQueueStatus = queueStatus;
     btn.textContent = isBlocked ? IBTN_CHECK_SVG : (isQueued ? '…' : (isFailed ? '!' : IBTN_BLOCK_SVG));
-    btn.style.border = `${isHot && !isBlocked ? 2.5 : 1.5}px solid ${stateColor}`;
-    btn.style.color = isBlocked ? C.mute : (isHot ? color : (isQueued ? C.nameKw : (isFailed ? C.blockRed : C.sub)));
-    btn.style.boxShadow = !isBlocked && isHot
-      ? `0 0 0 3px ${color}45,0 0 10px ${color}38`
-      : (!isBlocked && isFailed ? `0 0 0 2px ${C.blockRed}40` : '');
-    btn.style.background = isBlocked ? `${C.mute}18` : (isHot ? `${color}22` : (isQueued ? `${C.nameKw}16` : 'transparent'));
-    btn.style.opacity = isHot && !isBlocked ? '1' : btn.style.opacity || '1';
+    btn.style.border = `${(isHot || isQueued) && !isBlocked ? 2.5 : 1.5}px solid ${stateColor}`;
+    btn.style.color = isBlocked ? C.mute : (isQueued ? C.blockRed : (isHot ? color : (isFailed ? C.blockRed : C.sub)));
+    btn.style.boxShadow = !isBlocked && isQueued
+      ? `0 0 0 3px ${C.blockRed}45,0 0 10px ${C.blockRed}38`
+      : (!isBlocked && isHot ? `0 0 0 3px ${color}45,0 0 10px ${color}38` : (!isBlocked && isFailed ? `0 0 0 2px ${C.blockRed}40` : ''));
+    btn.style.background = isBlocked ? `${C.mute}18` : (isQueued ? `${C.blockRed}22` : (isHot ? `${color}22` : 'transparent'));
+    btn.style.opacity = (isHot || isQueued) && !isBlocked ? '1' : btn.style.opacity || '1';
     const prefix = reason === 'matched' ? '[匹配过滤] ' : (reason === 'referral' ? '[导流号] ' : (reason === 'hide_only' ? '[只隐藏规则] ' : ''));
     const handle = btn.dataset.xfsHandle || '';
     const details = [btn.dataset.xfsHideOnlyTooltip, btn.dataset.xfsMatchTooltip, btn.dataset.xfsReferralTooltip].filter(Boolean).join('\n');
     const actionTitle = isBlocked
       ? `已拉黑 · 点击取消 @${handle}`
-      : (isQueued ? `已在拉黑排队中 · 点击查看详情 @${handle}` : (isFailed ? `排队执行失败 · 点击重新加入 @${handle}` : `拉黑 @${handle}`));
+      : (isQueued ? (isRunning ? `正在执行中，暂时不能移出 @${handle}` : `已在拉黑排队中 · 点击移出队列 @${handle}`) : (isFailed ? `排队执行失败 · 点击重新加入 @${handle}` : `拉黑 @${handle}`));
     btn.title = prefix + actionTitle
       + (details ? `\n\n命中规则:\n${details}` : '');
   }
@@ -5090,8 +5818,31 @@
     return p;
   }
 
+  function ensureGlobalBlockQueueStrip() {
+    if (!document.body) return null;
+    let p = document.getElementById('xfs-global-block-queue-strip');
+    if (p) return p;
+    const pos = readGlobalBlockQueuePosition();
+    p = document.createElement('div');
+    p.id = 'xfs-global-block-queue-strip';
+    p.style.cssText = [
+      'position:fixed', `top:${pos.top}px`, `left:${pos.left}px`,
+      `width:${GLOBAL_BLOCK_QUEUE_STRIP_W}px`, 'box-sizing:border-box', 'padding:6px 8px',
+      'background:rgba(247,249,249,0.78)', `color:${C.text}`,
+      'backdrop-filter:blur(10px) saturate(135%)', '-webkit-backdrop-filter:blur(10px) saturate(135%)',
+      'border:1px solid rgba(207,217,222,0.82)', 'border-radius:999px',
+      'box-shadow:0 6px 22px rgba(15,20,25,0.10)',
+      'font-size:10px', 'line-height:1.2',
+      `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif`,
+      'z-index:2147483646',
+    ].join(';');
+    document.body.appendChild(p);
+    return p;
+  }
+
   function clampGlobalBlockQueuePosition(pos, p = document.getElementById('xfs-global-block-queue')) {
-    const w = GLOBAL_BLOCK_QUEUE_PANEL_W;
+    const isStrip = p?.id === 'xfs-global-block-queue-strip';
+    const w = isStrip ? GLOBAL_BLOCK_QUEUE_STRIP_W : GLOBAL_BLOCK_QUEUE_PANEL_W;
     const h = p?.offsetHeight || 72;
     const maxLeft = Math.max(0, window.innerWidth - w - 8);
     const maxTop = Math.max(0, window.innerHeight - h - 8);
@@ -5157,11 +5908,12 @@
     };
   }
 
-  function updateGlobalBlockQueuePanel() {
+  function updateGlobalBlockQueuePanel(q = readGlobalBlockQueue()) {
     if (globalQueuePanelDragging) return;
     const minimized = globalBlockQueueMinimized();
     if (!minimized) {
       document.getElementById('xfs-global-block-queue')?.remove();
+      document.getElementById('xfs-global-block-queue-strip')?.remove();
       const panel = document.getElementById('xfs-panel');
       if (panel?.dataset.xfsGlobalQueueView !== '1') setTimeout(() => showGlobalBlockQueueDetailPanel(false), 0);
       return;
@@ -5170,9 +5922,10 @@
     if (detailPanel?.dataset.xfsGlobalQueueView === '1') detailPanel.remove();
     if (globalQueuePanelSuppressed) {
       document.getElementById('xfs-global-block-queue')?.remove();
+      document.getElementById('xfs-global-block-queue-strip')?.remove();
       return;
     }
-    const { counts } = globalBlockQueueSummary();
+    const { counts } = globalBlockQueueSummary(q);
     const paused = globalBlockQueuePaused();
     const active = counts.queued + counts.running;
     const failed = counts.failed || 0;
@@ -5180,6 +5933,40 @@
     const round = readGlobalQueueRound();
     const cooling = Number(round.cooldownUntil || 0) > Date.now();
     const experimentActive = experimentalBrowseBlockActive();
+    const stripCollapsed = globalBlockQueueStripCollapsed();
+    if (stripCollapsed) {
+      document.getElementById('xfs-global-block-queue')?.remove();
+      const strip = ensureGlobalBlockQueueStrip();
+      if (!strip) return;
+      strip.style.right = 'auto';
+      strip.style.width = `${GLOBAL_BLOCK_QUEUE_STRIP_W}px`;
+      const stripPos = clampGlobalBlockQueuePosition(readGlobalBlockQueuePosition(), strip);
+      strip.style.left = `${stripPos.left}px`;
+      strip.style.top = `${stripPos.top}px`;
+      strip.style.opacity = active || counts.failed ? '1' : '0.72';
+      strip.innerHTML = '';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+      const info = document.createElement('button');
+      info.type = 'button';
+      info.textContent = `${experimentActive ? '排队枪毙' : '排队'} ${active} · 执${counts.running}`;
+      info.title = `剩余 ${active} 个，执行中 ${counts.running} 个${failed ? `，失败 ${failed} 个` : ''}`;
+      info.style.cssText = `flex:1;min-width:0;background:none;border:none;padding:0;text-align:left;cursor:pointer;font-size:8px;font-weight:800;color:${cooling ? C.blockRed : (experimentActive ? C.blockRed : C.text)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+      info.onclick = () => setGlobalBlockQueueStripCollapsed(false);
+      const expandBtn = document.createElement('button');
+      expandBtn.type = 'button';
+      expandBtn.textContent = '展开';
+      expandBtn.title = '展开状态卡片';
+      expandBtn.style.cssText = `border:1px solid ${C.btnBorder};border-radius:999px;background:#fff;color:${C.sub};font-size:7px;font-weight:800;padding:2px 5px;cursor:pointer;line-height:1.2;flex:0 0 auto;`;
+      expandBtn.onclick = () => setGlobalBlockQueueStripCollapsed(false);
+      row.appendChild(info);
+      row.appendChild(expandBtn);
+      strip.appendChild(row);
+      makeGlobalBlockQueuePanelDraggable(strip, strip);
+      avoidGlobalQueuePanelOverlap(strip);
+      return;
+    }
+    document.getElementById('xfs-global-block-queue-strip')?.remove();
     const p = ensureGlobalBlockQueuePanel();
     if (!p) return;
     p.style.right = 'auto';
@@ -5201,11 +5988,11 @@
     topActions.style.cssText = 'display:flex;align-items:center;gap:4px;flex:0 0 auto;';
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
-    dismissBtn.textContent = 'x';
-    dismissBtn.title = '关闭此卡片；可从排队详情再次打开';
+    dismissBtn.textContent = '–';
+    dismissBtn.title = '缩成最小状态条';
     dismissBtn.style.cssText = `border:1px solid ${C.btnBorder};border-radius:7px;background:#fff;color:${C.sub};font-size:10px;font-weight:800;padding:2px 5px;cursor:pointer;line-height:1.2;`;
     dismissBtn.onclick = () => {
-      p.remove();
+      setGlobalBlockQueueStripCollapsed(true);
     };
     topActions.appendChild(dismissBtn);
     topRow.appendChild(title);
@@ -5288,15 +6075,19 @@
 
   function startGlobalBlockQueueMonitor() {
     ensureGlobalBlockQueuePanel();
-    syncCompletedGlobalBlocksToThisTab();
-    updateGlobalBlockQueuePanel();
-    refreshGlobalQueueInlineButtons();
+    let q = readGlobalBlockQueue();
+    syncCompletedGlobalBlocksToThisTab(q);
+    updateGlobalBlockQueuePanel(q);
+    refreshGlobalQueueInlineButtons(q);
+    applyHideAll();
     maybeStartGlobalBlockQueueWorker();
     if (globalQueueUiTimer) clearInterval(globalQueueUiTimer);
     globalQueueUiTimer = setInterval(() => {
-      syncCompletedGlobalBlocksToThisTab();
-      updateGlobalBlockQueuePanel();
-      refreshGlobalQueueInlineButtons();
+      q = readGlobalBlockQueue();
+      syncCompletedGlobalBlocksToThisTab(q);
+      updateGlobalBlockQueuePanel(q);
+      refreshGlobalQueueInlineButtons(q);
+      applyHideAll();
       maybeStartGlobalBlockQueueWorker();
     }, 1200);
   }
@@ -5336,6 +6127,53 @@
   }
   function homeToolbarTipText() {
     return '主页精简工具栏：这里只提供设置入口。本工具主要针对回复区，不过滤 Twitter/X 主页主贴。';
+  }
+
+  function removeExperimentalBrowseBlockTourTip() {
+    document.getElementById('xfs-experiment-tour-tip')?.remove();
+  }
+
+  function showExperimentalBrowseBlockTourTip() {
+    if (!document.body || !experimentalBrowseBlockActive()) return;
+    if (sessionStorage.getItem(EXPERIMENT_BROWSE_BLOCK_TOUR_SEEN_KEY)) return;
+    sessionStorage.setItem(EXPERIMENT_BROWSE_BLOCK_TOUR_SEEN_KEY, '1');
+    removeExperimentalBrowseBlockTourTip();
+
+    const tip = document.createElement('div');
+    tip.id = 'xfs-experiment-tour-tip';
+    tip.style.cssText = [
+      'position:fixed', `right:${toolbarRightPx(48)}`, `bottom:${toolbarBottomPx(176)}`,
+      'width:min(320px, calc(100vw - 28px))', 'box-sizing:border-box',
+      'padding:12px 14px 12px 14px', 'border-radius:12px',
+      `border:1px solid ${C.blockRed}`, 'background:linear-gradient(180deg,#fff7f7 0%,#fff1f1 100%)',
+      `color:${C.blockRed}`, 'box-shadow:0 12px 32px rgba(244,33,46,0.18)',
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      'font-size:12px', 'line-height:1.55', 'z-index:2147483647',
+    ].join(';');
+
+    const title = document.createElement('div');
+    title.textContent = '警告';
+    title.style.cssText = 'font-size:13px;font-weight:800;margin-bottom:6px;';
+    const body = document.createElement('div');
+    body.textContent = '边刷边拉的模式打开，会自动拉黑所有被匹配的用户!';
+    body.style.cssText = 'font-weight:700;';
+    const sub = document.createElement('div');
+    sub.textContent = '此提示会显示 5 秒。需要关闭时，到右侧设置面板手动关闭。';
+    sub.style.cssText = 'margin-top:7px;color:#8a1c24;font-size:11px;line-height:1.5;';
+
+    const arrow = document.createElement('div');
+    arrow.style.cssText = [
+      'position:absolute', 'top:50%', 'right:-8px', 'width:14px', 'height:14px',
+      'background:#fff3f3', `border-top:1px solid ${C.blockRed}`, `border-right:1px solid ${C.blockRed}`,
+      'transform:translateY(-50%) rotate(45deg)',
+    ].join(';');
+
+    tip.appendChild(arrow);
+    tip.appendChild(title);
+    tip.appendChild(body);
+    tip.appendChild(sub);
+    document.body.appendChild(tip);
+    setTimeout(removeExperimentalBrowseBlockTourTip, EXPERIMENT_BROWSE_BLOCK_TOUR_MIN_MS);
   }
 
   function mkIconBtn(id, svg, title, bottom, color, onclick) {
@@ -5767,7 +6605,8 @@
       '',
       '导流号：根据账号主页里的 x.com/twitter.com 导流链接，或“简介含大号且含任意链接”判断。只检查已加载回复用户，受平台接口/限速影响，识别会稍有延迟。',
       '自动检测导流号：低频后台检查滚动加载过的回复用户，命中后右上角拉黑按钮会变橙色。',
-      '不自动隐藏/拉黑会员：默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。',
+      '会员保护：默认开启。页面上显示会员标识的回复用户不会加入自动拉黑候选；手动拉黑按钮仍可用。',
+      '隐藏命中会员：默认关闭。开启后，会员回复如果命中内容关键词/正则也会被自动隐藏，但仍不会仅因此进入自动拉黑队列。',
       '',
       '拉黑新号：默认关闭。开启后，导流扫描会把少于所选天数或晚于所选日期注册的账号也标成橙色，并纳入导流扫描的拉黑候选。日期选择框默认是一个月之前的今天。它需要额外查询主页，慢、容易限流，而且新号不一定是垃圾号，误伤风险较高。',
       '',
@@ -5777,7 +6616,6 @@
 
   function showExperimentalBrowseBlockPanel() {
     document.getElementById('xfs-experiment-panel')?.remove();
-    const state = readExperimentalBrowseBlockState();
     const active = experimentalBrowseBlockActive();
     const p = document.createElement('div');
     p.id = 'xfs-experiment-panel';
@@ -5807,7 +6645,7 @@
     const timingSummary = document.createElement('div');
     timingSummary.style.cssText = `font-size:10px;line-height:1.45;color:${C.sub};`;
     const timingAdvice = document.createElement('div');
-    timingAdvice.textContent = `如果经常被平台登出，说明风控偏紧。建议先把时间至少调到：基础间隔 15 秒、每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停 30 秒、每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停 5 分钟；如果还是容易掉登录，就继续往上加。可以另开一个 X/Twitter 页面挂后台，让它慢慢跑。`;
+    timingAdvice.textContent = `默认是基础间隔 5 秒、每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停 30 秒、每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停 2 分钟；长冷却允许手动降到 1 分钟。越低越容易触发风控，如果经常被平台登出，就继续往上加。`;
     timingAdvice.style.cssText = `font-size:10px;line-height:1.45;color:${C.sub};padding:6px 7px;border-radius:7px;background:${C.catBg};`;
     const timingGrid = document.createElement('div');
     timingGrid.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:6px 8px;align-items:center;';
@@ -5834,20 +6672,19 @@
       return input;
     }
 
-    const slowInput = mkTimingInput('基础间隔', '秒', 15, 600);
+    const slowInput = mkTimingInput('基础间隔', '秒', 5, 600);
     const shortInput = mkTimingInput(`每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个暂停时长`, '秒', 30, 1800);
-    const longInput = mkTimingInput(`每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停时长`, '分钟', 5, 120);
+    const longInput = mkTimingInput(`每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个暂停时长`, '分钟', 1, 120);
 
     function syncTimingUi() {
       const current = effectiveExperimentTimingConfig();
-      const expiresText = state.expiresAt ? new Date(state.expiresAt).toLocaleString() : '未开启';
       slowInput.value = String(Math.round(current.slowBlockDelayMs / 1000));
       shortInput.value = String(Math.round(current.shortCooldownMs / 1000));
       longInput.value = String(Math.round(current.longCooldownMs / 60000));
       timingSummary.textContent = `当前生效：间隔 ${experimentSlowBlockGapText()}；${experimentCooldownSummaryText()}。实际执行时还会额外加随机抖动。这里只改时长，不改每 ${GLOBAL_BLOCK_QUEUE_SHORT_COOLDOWN_EVERY} 个 / 每 ${GLOBAL_BLOCK_QUEUE_LONG_COOLDOWN_EVERY} 个的触发次数。`;
       note.textContent = active
-        ? `当前已开启。过期时间：${expiresText}。执行拉黑会使用你当前设置的时间，并强制跳过会员账号。`
-        : '开启后仅在当前浏览周期有效；所有 X/Twitter 标签页共享状态。关闭所有标签页后下次进入会自动关闭，最晚 24 小时自动关闭。';
+        ? '当前已开启。执行拉黑会使用你当前设置的时间，并强制跳过会员账号；会持续保持开启，直到你手动关闭。'
+        : '开启后所有 X/Twitter 标签页共享状态，并会持续保持开启，直到你手动关闭。';
     }
 
     function persistTimingUi() {
@@ -5881,13 +6718,14 @@
     actions.style.cssText = 'display:flex;gap:8px;align-items:center;';
     const enableBtn = document.createElement('button');
     enableBtn.type = 'button';
-    enableBtn.textContent = active ? '重新开启 24 小时' : '开启边刷边拉黑';
+    enableBtn.textContent = active ? '保持开启并应用当前设置' : '开启边刷边拉黑';
     enableBtn.style.cssText = `flex:1;background:${C.blockRed};color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:800;cursor:pointer;`;
     enableBtn.onclick = () => {
       if (!confirm.checked) {
         showToast('必须先确认误伤风险', true);
         return;
       }
+      persistTimingUi();
       enableExperimentalBrowseBlock();
       p.remove();
     };
@@ -5962,11 +6800,19 @@
     }
 
     function refreshVerifiedProtectionControls() {
-      verifiedProtectBtn.textContent = `不自动隐藏/拉黑会员：${skipVerifiedAccountsActive ? '开' : '关'}`;
+      verifiedProtectBtn.textContent = `会员保护不自动拉黑：${skipVerifiedAccountsActive ? '开' : '关'}`;
       verifiedProtectBtn.style.borderColor = skipVerifiedAccountsActive ? C.mute : C.btnBorder;
       verifiedProtectBtn.style.color = skipVerifiedAccountsActive ? C.mute : C.sub;
       verifiedProtectBtn.style.background = skipVerifiedAccountsActive ? '#effaf7' : '#fff';
-      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会被隐藏、标红/橙或加入自动拉黑候选；手动拉黑按钮仍可用。';
+      verifiedProtectBtn.title = '默认开启。页面上显示会员标识的回复用户不会加入自动拉黑候选；手动拉黑按钮仍可用。';
+    }
+
+    function refreshVerifiedMatchedHideControls() {
+      verifiedMatchedHideBtn.textContent = `隐藏命中会员：${hideVerifiedMatchedActive ? '开' : '关'}`;
+      verifiedMatchedHideBtn.style.borderColor = hideVerifiedMatchedActive ? C.blockRed : C.btnBorder;
+      verifiedMatchedHideBtn.style.color = hideVerifiedMatchedActive ? C.blockRed : C.sub;
+      verifiedMatchedHideBtn.style.background = hideVerifiedMatchedActive ? '#fff1f1' : '#fff';
+      verifiedMatchedHideBtn.title = '默认关闭。开启后，会员回复如果命中内容关键词/正则也会被隐藏；仍不会仅因命中内容规则进入自动拉黑队列。';
     }
 
     function refreshHideOnlyRulesControls() {
@@ -5995,6 +6841,7 @@
     const verifiedProtectBtn = mkToolBtn('', () => {
       skipVerifiedAccountsActive = !skipVerifiedAccountsActive;
       GM_setValue('skip_verified_accounts', skipVerifiedAccountsActive);
+      bumpHideRulesGeneration();
       refreshVerifiedProtectionControls();
       if (skipVerifiedAccountsActive) {
         clearProtectedVerifiedArticlesInView();
@@ -6011,9 +6858,23 @@
     });
     refreshVerifiedProtectionControls();
 
+    const verifiedMatchedHideBtn = mkToolBtn('', () => {
+      hideVerifiedMatchedActive = !hideVerifiedMatchedActive;
+      GM_setValue('hide_verified_matched', hideVerifiedMatchedActive);
+      bumpHideRulesGeneration();
+      refreshVerifiedMatchedHideControls();
+      if (!hideVerifiedMatchedActive) clearProtectedVerifiedArticlesInView({ force: true });
+      reapplyContentRulesForVisible();
+      injectInlineButtons();
+      applyHideAll();
+      showToast(hideVerifiedMatchedActive ? '命中会员自动隐藏已开启' : '命中会员自动隐藏已关闭', false);
+    });
+    refreshVerifiedMatchedHideControls();
+
     const hideOnlyRulesBtn = mkToolBtn('', () => {
       hideOnlyRulesActive = !hideOnlyRulesActive;
       GM_setValue('hide_only_rules_active', hideOnlyRulesActive);
+      bumpHideRulesGeneration();
       refreshHideOnlyRulesControls();
       reapplyContentRulesForVisible();
       applyHideAll();
@@ -6051,6 +6912,7 @@
       remoteRulesActive = !remoteRulesActive;
       GM_setValue('remote_rules_active', remoteRulesActive);
       reloadKws();
+      bumpHideRulesGeneration();
       refreshKeywordPanelIfOpen();
       refreshRemoteRulesControls();
       showToast(remoteRulesActive ? '远程规则订阅已开启' : '远程规则订阅已关闭', false);
@@ -6201,7 +7063,7 @@
 
     const editBtn = mkToolBtn('关键词定义', () => {
       closeToolsPanel();
-      showPanel(scanPage(), { keywordsOpen: true });
+      showKeywordPanel();
     });
     editBtn.style.borderColor = C.regexKw;
     editBtn.style.color = C.regexKw;
@@ -6225,6 +7087,7 @@
     p.appendChild(ruleTestBtn);
     grid.appendChild(autoReferralBtn);
     grid.appendChild(verifiedProtectBtn);
+    grid.appendChild(verifiedMatchedHideBtn);
     grid.appendChild(hideOnlyRulesBtn);
     grid.appendChild(remoteWrap);
     grid.appendChild(youngWrap);
@@ -6273,6 +7136,7 @@
   function removeGearBtn() {
     document.getElementById('xfs-gear-btn')?.remove();
     closeToolsPanel();
+    closeKeywordPanel();
   }
   function injectHomeToolbar() {
     if (!document.body) return;
@@ -6324,6 +7188,7 @@
 
       const handle = extractHandleFromArticle(art);
       if (!handle) return;
+      const isProfileOwner = isCurrentProfileTimelineOwnerHandle(handle);
 
       const displayName = extractDisplayNameFromArticle(art, handle) || handle;
 
@@ -6337,19 +7202,28 @@
       const tweetSnippet = buildUserPreviewSnippet(textEl ? getTextWithEmoji(textEl) : '', cardEl ? getTextWithEmoji(cardEl) : '', bodyLinkText);
 
       const isProtectedVerified = isProtectedVerifiedArticle(art);
-      const allowFilterHighlight = location.pathname !== '/home';
-      const matchInfo = allowFilterHighlight && !isProtectedVerified
+      const allowFilterHighlight = contentFilterAllowedOnCurrentRoute();
+      const allowProtectedVerifiedHide = canHideProtectedVerifiedMatch(art);
+      const matchInfo = allowFilterHighlight && !isProfileOwner && (!isProtectedVerified || allowProtectedVerifiedHide)
         ? matchesFilters(displayName, fullText)
         : { matched: false, actionableMatched: false, cats: new Set(), actionableCats: new Set(), heartHits: [], nameKwHits: [], kwHits: [], reHits: [], hideOnlyReHits: [], allHideOnlyReHits: [] };
       const { matched, actionableMatched, actionableCats, heartHits, nameKwHits, kwHits, reHits, hideOnlyReHits, allHideOnlyReHits } = matchInfo;
-      if (isProtectedVerified) clearProtectedVerifiedArticleState(art);
+      if (isProtectedVerified && !allowProtectedVerifiedHide) clearProtectedVerifiedArticleState(art, { preserveMatchedHide: true });
       else setArticleHideRuleStats(art, { nameKwHits, kwHits, reHits, hideOnlyReHits });
       const alreadyBlocked = blockedHandles.has(normalizeHandle(handle));
       const isOP = isMainTweetArticle(art);
       art.dataset.xfsHideMatched = (!isOP && matched && !alreadyBlocked) ? '1' : '0';
-      if (alreadyBlocked) art.dataset.xfsReferralAccount = '0';
-      else if (!isProtectedVerified) scheduleReferralCheck(art, handle, isOP, displayName);
-      if (!isOP && actionableMatched && !alreadyBlocked && /\/status\/\d/.test(location.pathname)) {
+      if (alreadyBlocked) {
+        art.dataset.xfsBlocked = '1';
+        art.dataset.xfsReferralAccount = '0';
+        art.dataset.xfsReferralQueued = '0';
+      }
+      else if (isProtectedVerified) {
+        art.dataset.xfsReferralAccount = '0';
+        art.dataset.xfsReferralQueued = '0';
+      }
+      else if (!isProtectedVerified && !isProfileOwner) scheduleReferralCheck(art, handle, isOP, displayName);
+      if (!isProfileOwner && !isProtectedVerified && !isOP && actionableMatched && !alreadyBlocked && contentFilterAllowedOnCurrentRoute()) {
         matchedHandlesInView.add(handle);
         if (!matchedUsersCache.has(handle))
           matchedUsersCache.set(handle, { handle, displayName, cats: actionableCats, heartHits: [...heartHits], nameKwHits: [...nameKwHits], kwHits: [...kwHits], reHits: [...reHits], hideOnlyReHits: [...hideOnlyReHits], tweetSnippet });
@@ -6426,9 +7300,11 @@
       btn.onmouseenter = () => {
         if (btn.disabled) return;
         const isBlocked = btn.dataset.xfsState === 'blocked';
+        const queueStatus = btn.dataset.xfsQueueStatus || '';
+        const isQueued = ['queued', 'running'].includes(queueStatus);
         const reason = buttonMatchedReason(btn);
         const color = reason === 'referral' ? C.referralHot : (reason === 'hide_only' ? C.hideOnlyHot : C.blockRed);
-        btn.style.background = isBlocked ? `${C.suspect}20` : (reason ? `${color}18` : `${C.sub}12`);
+        btn.style.background = isBlocked ? `${C.suspect}20` : (isQueued ? `${C.blockRed}28` : (reason ? `${color}18` : `${C.sub}12`));
         btn.style.transform  = 'scale(1.18)';
       };
       btn.onmouseleave = () => {
@@ -6441,8 +7317,23 @@
         if (btn.disabled) return;
         const isBlocked = btn.dataset.xfsState === 'blocked';
         const queueItem = isBlocked ? null : globalBlockQueueItemForHandle(handle);
-        if (['queued', 'running'].includes(queueItem?.status)) {
-          showToast(`@${handle} 已在拉黑排队中`, false);
+        const queueStatus = queueItem?.status || '';
+        if (queueStatus === 'queued') {
+          const result = removeGlobalBlockQueueItem(handle);
+          document.querySelectorAll('button[data-xfs-handle]').forEach(b => {
+            if (normalizeHandle(b.dataset.xfsHandle) !== normalizeHandle(handle)) return;
+            b.disabled = false;
+            b.style.opacity = '1';
+            updateInlineBlockButton(b);
+          });
+          const msg = result.ok
+            ? `@${handle} 已移出拉黑队列`
+            : (result.reason === 'running' ? `@${handle} 正在执行中，暂时不能移出队列` : `@${handle} 不在拉黑队列中`);
+          showToast(msg, !result.ok);
+          return;
+        }
+        if (queueStatus === 'running') {
+          showToast(`@${handle} 正在执行中，暂时不能移出队列`, true);
           return;
         }
         btn.disabled = true; btn.style.opacity = '0.35';
@@ -6823,11 +7714,12 @@
     btn.onclick = () => {
       hideReferralActive = !hideReferralActive;
       GM_setValue('hide_referral_accounts', hideReferralActive);
+      markHideSyncDirty();
       btn.textContent = EYE_SVG;
       btn.appendChild(badge);
       updateReferralBtn();
       if (hideReferralActive) applyReferralForVisible();
-      applyHideAll();
+      applyHideAll({ immediate: true });
       showToast(hideReferralActive ? '导流号隐藏已开启' : '导流号隐藏已关闭', false);
     };
 
@@ -6890,13 +7782,14 @@
     btn.onclick = () => {
       hideMatchedActive = !hideMatchedActive;
       GM_setValue('hide_matched', hideMatchedActive);
+      markHideSyncDirty();
       updateMatchedHideBtn();
-      applyHideAll();
+      applyHideAll({ immediate: true });
     };
 
     document.body.appendChild(btn);
     updateMatchedHideBtn();
-    applyHideAll();
+    scheduleHideAll();
   }
 
   function removeHideBtn() {
@@ -6935,6 +7828,7 @@
     let ibtnTimer = null;
     let profileTimer = null;
     let routeBtnTimer = null;
+    let visibleRuleRepairTimer = null;
     let watchdogTimer = null;
 
     function startButtonWatchdog(duration = 30000, interval = 500) {
@@ -6969,6 +7863,11 @@
       matchedUsersCache.clear();
       referralIntentHints.clear();
       referralHintRefreshDone.clear();
+      cancelHidePrewarm();
+      cancelQueuedHideArticleRepairs();
+      bumpHideRulesGeneration();
+      resetVisibleReplyCount();
+      startVisibleReplyCountWatchdog();
       removeBtn();
       removeListBtn();
       document.getElementById('xfs-panel')?.remove();
@@ -6979,27 +7878,74 @@
     }
     _navCallbacks.push(handleNav);
 
+    // Throttle instead of debounce: X can keep adding reply fragments while
+    // scrolling, and a pure debounce can otherwise postpone repairs forever.
+    function scheduleVisibleRuleRepair(delay = 350) {
+      if (visibleRuleRepairTimer) return;
+      visibleRuleRepairTimer = setTimeout(() => {
+        visibleRuleRepairTimer = null;
+        markHideSyncDirty();
+        reapplyContentRulesForVisible();
+        injectInlineButtons();
+        scheduleHideAll();
+        scheduleHidePrewarm(300);
+        scheduleVisibleReplyCountUpdate();
+      }, delay);
+    }
+
+    function queueChangedArticle(node) {
+      const el = node?.nodeType === 1 ? node : node?.parentElement;
+      if (!el) return;
+      const article = el.matches?.('article[data-testid="tweet"]')
+        ? el
+        : el.closest?.('article[data-testid="tweet"]');
+      if (article) queueHideArticleRepair(article);
+      // A React batch can insert a wrapper that already contains one or more
+      // complete articles, none of which is an ancestor of the wrapper.
+      el.querySelectorAll?.('article[data-testid="tweet"]').forEach(queueHideArticleRepair);
+    }
+
     // ── MutationObserver — inline buttons + fallback for nav events ──
     // No longer responsible for URL-change detection (handled by handleNav above).
     // The fallback injectBtn() calls are cheap due to the early-return guard inside.
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(mutation => {
+        if (mutation.type === 'characterData') {
+          queueChangedArticle(mutation.target);
+          return;
+        }
+        mutation.addedNodes.forEach(queueChangedArticle);
+      });
       clearTimeout(ibtnTimer);
       ibtnTimer = setTimeout(injectInlineButtons, 300);
       clearTimeout(profileTimer);
       profileTimer = setTimeout(captureReferralAccountsFromProfileDom, 250);
+      scheduleVisibleRuleRepair();
+      scheduleHidePrewarm(750, { reset: false });
+      scheduleVisibleReplyCountUpdate(350);
 
       // Fallback: re-inject main buttons if DOM settled before the nav timer fired.
       clearTimeout(routeBtnTimer);
       routeBtnTimer = setTimeout(ensureRouteButtons, 300);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    hideLastScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    hideLastScrollAt = Date.now();
+    window.addEventListener('scroll', noteHideScrollActivity, { passive: true });
     // Initial inject on page load
     startExperimentalBrowseBlockHeartbeat();
     startGlobalBlockQueueMonitor();
     injectExperimentKillSwitch();
+    setTimeout(showExperimentalBrowseBlockTourTip, 1000);
     setTimeout(captureReferralAccountsFromProfileDom, 900);
-    setTimeout(injectInlineButtons, 1200);
+    setTimeout(() => {
+      injectInlineButtons();
+      document.querySelectorAll('article[data-testid="tweet"]').forEach(queueHideArticleRepair);
+    }, 1200);
     setTimeout(ensureRouteButtons, 1200);
+    setTimeout(() => scheduleHidePrewarm(250), 1400);
+    setTimeout(() => scheduleVisibleReplyCountUpdate(250), 1400);
+    startVisibleReplyCountWatchdog();
 
     // Startup watchdog: X.com can leave the DOM quiet before React has rendered
     // the target route. Re-check for a short window and repair any partial group.
@@ -7007,9 +7953,16 @@
 
     // Re-check when the user switches back to a backgrounded tab.
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) return;
+      if (document.hidden) {
+        flushHideRuleStats();
+        return;
+      }
       ensureRouteButtons();
       injectExperimentKillSwitch();
+      scheduleVisibleRuleRepair(250);
+      scheduleHidePrewarm(250);
+      scheduleVisibleReplyCountUpdate(250);
+      startVisibleReplyCountWatchdog(12000, 700);
       startButtonWatchdog(5000, 500);
     });
   }
@@ -7019,5 +7972,6 @@
   startUI();
   document.addEventListener('DOMContentLoaded', startUI);
   window.addEventListener('load', startUI);
+  window.addEventListener('beforeunload', flushHideRuleStats);
 
 })();
